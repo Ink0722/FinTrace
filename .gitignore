@@ -1,0 +1,61 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Python cache and test output
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# Logs and runtime output
+*.log
+logs/
+tmp/
+temp/
+
+# Local datasets, generated indexes, and bulky raw files
+data/
+14-知识图谱与智能推荐赛道-东吴证券-基于 Agentic AI 的金融长上下文推理、图谱穿透与财报反欺诈智能问答算法探索/
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.parquet
+*.feather
+*.pkl
+*.pickle
+*.joblib
+*.faiss
+*.index
+*.sqlite
+*.db
+
+# Generated evaluation traces
+evaluation/reports/*.jsonl
+!evaluation/reports/.gitkeep
+
+# Office/editor temporary files
+~$*
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.idea/
+.vscode/
