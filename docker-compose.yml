@@ -1,0 +1,11 @@
+services:
+  fintrace-api:
+    image: python:3.11-slim
+    working_dir: /workspace
+    command: python -m app.api.main
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/workspace

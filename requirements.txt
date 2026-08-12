@@ -1,0 +1,13 @@
+pydantic>=2.7
+python-dotenv>=1.0
+requests>=2.31
+fastapi>=0.111
+uvicorn>=0.30
+pytest>=8.0
+networkx>=3.2
+rank-bm25>=0.2.2
+langgraph>=1.0
+pymupdf>=1.24
+python-docx>=1.1
+faiss-cpu>=1.8
+numpy>=1.26

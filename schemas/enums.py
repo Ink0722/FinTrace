@@ -1,0 +1,26 @@
+from enum import StrEnum
+
+
+class ToolName(StrEnum):
+    DOCUMENT_SEARCH = "document_search"
+    OWNERSHIP_PENETRATION = "ownership_penetration"
+    EVENT_TIMELINE = "event_timeline"
+    FINANCIAL_RISK_ANALYSIS = "financial_risk_analysis"
+
+
+class ToolStatus(StrEnum):
+    SUCCESS = "success"
+    FAILED = "failed"
+    PARTIAL = "partial"
+
+
+class ErrorType(StrEnum):
+    ENTITY_AMBIGUOUS = "ENTITY_AMBIGUOUS"
+    ENTITY_NOT_FOUND = "ENTITY_NOT_FOUND"
+    INVALID_PERIOD = "INVALID_PERIOD"
+    INVALID_ARGUMENT = "INVALID_ARGUMENT"
+    DATA_NOT_AVAILABLE = "DATA_NOT_AVAILABLE"
+    EMPTY_RETRIEVAL_RESULT = "EMPTY_RETRIEVAL_RESULT"
+    TEMPORARY_DATABASE_ERROR = "TEMPORARY_DATABASE_ERROR"
+    UNSUPPORTED_QUERY = "UNSUPPORTED_QUERY"
+    VALIDATION_FAILED = "VALIDATION_FAILED"
