@@ -12,7 +12,7 @@ FinTrace 是一个面向 A 股投研场景的证据驱动型 Agentic AI 问答�
 - 基于 LangGraph 的 Agent Harness 和组合工具路由；
 - Qwen 兼容 OpenAI API 的 LLM 客户端封装；
 - Pytest 测试骨架；
-- `.env.example` 和 `docker-compose.yml`。
+- `.env.example` 和本地运行说明。
 
 真实数据未接入时会回退 sample 数据；如果显式配置了 CSV/知识库但目标数据缺失，工具会返回结构化错误，避免用样例数据冒充真实数据。
 
@@ -27,6 +27,11 @@ FinTrace 是一个面向 A 股投研场景的证据驱动型 Agentic AI 问答�
 5. [公告索引设计](docs/04-公告索引设计.md)：标题级时间线、正文入口和事件聚类边界；
 6. [财务报表设计](docs/05-财务报表设计.md)：期间口径、跨表勾稽、风险规则和 F1 标签；
 7. [研报摘要设计](docs/06-研报摘要设计.md)：结构化过滤、混合检索和机构观点证据。
+8. [Agent 评测实施方案](docs/07-Agent评测实施方案.md)：准确率边界、人工标注、自纠错、工具基准和财务 F1。
+9. [数据集构建技术白皮书](docs/08-数据集构建技术白皮书.md)：原始数据转换、公告正文获取、异常修复和数据资产验收。
+10. [统一文本 Document 构建白皮书](docs/09-统一文本Document构建白皮书.md)：字段映射、保守清理、原子写入、质量验收和下游边界。
+11. [多轮问题集人工标注指南](docs/10-多轮问题集人工标注指南.md)：Answerability、主体日期、工具和必要 Chunk 的人工标注规则。
+12. [Chunk 构建技术白皮书](docs/11-Chunk构建技术白皮书.md)：段落保持、章节继承、超长文本切分、版本冻结和全量质量验收。
 
 ## Code Review 导览
 
@@ -278,6 +283,7 @@ tools/
 schemas/
 prompts/
 knowledge_base/
+data_pipeline/
 evaluation/
 tests/
 deployment/
@@ -291,6 +297,8 @@ deployment/
 - 工具必须能脱离 Agent 独立测试；
 - MVP 优先稳定、可解释、可评测。
 
+Planner 采用“按需调用、综合分析主动检查”的策略：普通指标、公告或股东事实查询只调用必要工具；当用户提出企业综合分析、尽调、风险画像或投资风险研判时，即使没有逐项点名，也会主动考虑 `financial_risk_analysis` 和 `ownership_penetration`。前者负责三张财务报表的跨科目勾稽与风险信号识别，后者负责现有证据支持的资本关联和多层持股路径。现有比赛文件不含历史或实时行情，相关问题返回数据不支持，不由 LLM 凭记忆补充。
+
 ## 当前工具进度
 
 | 工具 | 当前状态 | 数据来源 |
@@ -299,6 +307,65 @@ deployment/
 | `ownership_penetration` | 已支持 CSV 数据源、有界图搜索、穿透比例和关系证据 | `data/ownership/*.csv` / `tools/ownership_graph/sample_data.py` |
 | `document_search` | 已支持 SQLite 知识库优先检索；无知识库时回退样例 BM25 | `data/knowledge_base/fintrace_kb.sqlite` / `tools/document_search/sample_data.py` |
 | `event_timeline` | 已支持 CSV 事件数据、时间过滤、事件聚类和证据绑定 | `data/events/events.csv` / `tools/event_timeline/sample_data.py` |
+
+## Operation 功能说明
+
+Planner 通过 `operation` 指定工具本次需要完成的具体任务。每个 operation 只承担一种相对明确的职责，避免把查询、计算、比较和解释混在一次工具执行中。
+
+| 工具 | Operation | 功能说明 | 典型问题 |
+|---|---|---|---|
+| `document_search` | `search` | 在公告正文和研报摘要中执行关键词或语义检索，并按公司、文档类型、日期和发布机构过滤结果；返回可追溯的 Chunk 及其来源信息。 | “贵州茅台的研报如何评价其盈利能力？”“公告中如何描述本次违规事项？” |
+| `financial_analysis` | `metric_query` | 查询一个或多个公司在指定报告期的原始财务指标或确定性派生指标，保留数值、单位、报表口径和来源。 | “查询公司 2024 年营业收入和净利润。” |
+| `financial_analysis` | `metric_compare` | 对同口径指标进行确定性计算：单公司加多个期间时返回有序序列、相邻期间变化和首尾累计变化，多公司加单一期间时返回各公司数值及差异；工具不生成趋势性语言结论。 | “分析公司近五年的经营现金流趋势。”“比较甲公司和乙公司 2024 年的资产负债率。” |
+| `financial_analysis` | `risk_scan` | 执行现金流与利润背离、存货异常、应收异常等确定性财务规则，返回风险信号、计算过程和证据；风险信号不等同于财务造假结论。 | “扫描公司近三年的财务异常风险。” |
+| `ownership_analysis` | `holding_query` | 查询主要股东快照：提供 `company_ids` 时从公司查股东并返回集中度，提供 `holder_ids` 时从股东反查公司，同时提供则做交叉过滤。 | “公司 2024 年末的前十大股东有哪些？”“某基金出现在哪些公司的主要股东名单中？” |
+| `ownership_analysis` | `holding_compare` | 比较同一公司两个快照日期的主要股东名单，确定性识别进入、退出、增持和减持及其变化幅度。 | “哪些主要股东在两个快照日期之间进行了减持？” |
+| `ownership_analysis` | `penetration` | 在快照能够证明的持股关系中搜索指定主体到目标公司的有限多层路径，返回每一跳持股比例、路径比例乘积和完整性警告。 | “主体 A 通过哪些层级间接持有公司 B？” |
+| `event_timeline` | `event_query` | 按主体、事件类型、关键词和日期范围筛选事件，完成去重和排序，并可包含财务或股东派生信号；返回可供 Agent 组织时间线的事件节点及证据。 | “查询公司 2022 年以来受到处罚的事件。”“整理公司近三年的违规和财务风险时间线。” |
+| `event_timeline` | `event_cluster` | 根据事件类型、时间接近程度和实体重合度聚合相关事件，输出事件簇及聚合依据；只表达相关性和时序，不自动认定因果关系。 | “把同一轮违规调查及后续处罚聚合为一个事件簇。” |
+
+选择原则：查原文使用 `search`；只查询财务数值使用 `metric_query`；需要计算跨期变化、连续多期序列或跨公司差异时使用 `metric_compare`；只有需要执行预警规则时才使用 `risk_scan`。`metric_compare` 不支持“多个公司与多个期间”同时比较，因为这种输入无法唯一确定比较维度。工具负责数值排序和计算，Agent LLM 负责根据工具结果说明上升、下降、增速变化或拐点，不得自行补充数值。持股事实、反向持股查询和集中度统一使用 `holding_query`，股东变化使用 `holding_compare`，多层路径使用 `penetration`。查找、过滤和排序事件统一使用 `event_query`，Agent 根据返回节点组织时间线；需要将相关节点归并为事件簇时使用 `event_cluster`。
+
+## 比赛文本 Document
+
+离线预处理代码统一放在`data_pipeline/`。当前公告与研报的统一Document构建流程为：
+
+```text
+announcements.jsonl + 公告 TXT
+research_reports.jsonl + abstract
+→ data_pipeline.text
+→ data/text_corpus/documents.jsonl
+```
+
+执行：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.text.cli build-documents `
+  --data-dir data
+```
+
+同时生成质量报告：
+
+```text
+data/text_corpus/document_quality.json
+```
+
+公告Document字段：
+
+```text
+document_id, document_type, company_id, title, published_date,
+tags, text, source_ref
+```
+
+研报Document额外包含`publisher`。公告`text`读取`document_path`指向的TXT正文，并清除正文开头与`title`严格等价的重复标题行；研报`text`只使用`abstract`，不代表研报全文。不支持的交易所、无文本层公告、空文本和无效字段只记录到质量报告，不进入输出。
+
+JSONL采用无BOM的UTF-8编码。在Windows PowerShell中预览时应显式指定编码：
+
+```powershell
+Get-Content -Encoding utf8 data\text_corpus\documents.jsonl -TotalCount 1
+```
+
+本命令只构建统一Document，不生成Chunk、不调用Embedding、不构建FAISS。完整模块说明见[data_pipeline/README.md](data_pipeline/README.md)。
 
 ## 文档知识库
 
@@ -507,7 +574,7 @@ FINANCIAL_RECORDS_PATH=data/financial/financial_records.csv
 
 ```csv
 company_id,company_name,report_period,statement_type,metric_code,metric_name,value,unit,currency,source_doc_id,source_path,page,evidence_id
-000001.SZ,示例公司,2022A,balance_sheet,INVENTORY,存货,310,CNY,CNY,ANNUAL-2022,data/raw_documents/annual_report.pdf,86,EVID-FIN-001
+000001.SZ,示例公司,2022-12-31,balance_sheet,INVENTORY,存货,310,CNY,CNY,ANNUAL-2022,data/raw_documents/annual_report.pdf,86,EVID-FIN-001
 ```
 
 常用 `metric_code`：
@@ -603,7 +670,7 @@ harness/routing/router.py     # 对外薄入口
 
 ```text
 用户问题
-→ 规则抽取 company_id、period、focus_topics、document_types、event_types
+→ 规则抽取 company_ids、report_periods、focus_topics、document_types、event_types
 → 如果配置了 planner 模型，则调用 Qwen planner 生成候选 ExecutionPlan
 → Pydantic 校验并补齐工具参数
 → 失败或未配置时回退到规则 planner

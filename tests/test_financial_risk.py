@@ -30,7 +30,7 @@ def test_financial_risk_tool_returns_evidence() -> None:
         ToolCall(
             tool_call_id="CALL-001",
             tool_name=ToolName.FINANCIAL_RISK_ANALYSIS,
-            arguments={"company_id": "000001.SZ"},
+            arguments={"company_ids": ["000001.SZ"]},
             reason="test",
         )
     )
@@ -43,20 +43,20 @@ def test_financial_risk_prefers_csv_data(monkeypatch) -> None:
     test_root = write_financial_csv(
         [
             "company_id,company_name,report_period,statement_type,metric_code,metric_name,value,unit,currency,source_doc_id,source_path,page,evidence_id",
-            "000777.SZ,CSV公司,2021A,income_statement,REVENUE,营业收入,100,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,80,EVID-FIN-001",
-            "000777.SZ,CSV公司,2021A,income_statement,NET_PROFIT,净利润,10,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,81,EVID-FIN-002",
-            "000777.SZ,CSV公司,2021A,cashflow_statement,OPERATING_CASHFLOW,经营现金流,12,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,82,EVID-FIN-003",
-            "000777.SZ,CSV公司,2021A,balance_sheet,INVENTORY,存货,20,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,83,EVID-FIN-004",
-            "000777.SZ,CSV公司,2021A,balance_sheet,ACCOUNTS_RECEIVABLE,应收账款,15,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,84,EVID-FIN-005",
-            "000777.SZ,CSV公司,2021A,income_statement,GROSS_PROFIT,毛利,30,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,85,EVID-FIN-006",
-            "000777.SZ,CSV公司,2021A,income_statement,NON_RECURRING_PROFIT,非经常性损益,1,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,86,EVID-FIN-007",
-            "000777.SZ,CSV公司,2022A,income_statement,REVENUE,营业收入,120,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,80,EVID-FIN-008",
-            "000777.SZ,CSV公司,2022A,income_statement,NET_PROFIT,净利润,20,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,81,EVID-FIN-009",
-            "000777.SZ,CSV公司,2022A,cashflow_statement,OPERATING_CASHFLOW,经营现金流,5,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,82,EVID-FIN-010",
-            "000777.SZ,CSV公司,2022A,balance_sheet,INVENTORY,存货,60,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,83,EVID-FIN-011",
-            "000777.SZ,CSV公司,2022A,balance_sheet,ACCOUNTS_RECEIVABLE,应收账款,35,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,84,EVID-FIN-012",
-            "000777.SZ,CSV公司,2022A,income_statement,GROSS_PROFIT,毛利,36,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,85,EVID-FIN-013",
-            "000777.SZ,CSV公司,2022A,income_statement,NON_RECURRING_PROFIT,非经常性损益,8,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,86,EVID-FIN-014",
+            "000777.SZ,CSV公司,2021-12-31,income_statement,REVENUE,营业收入,100,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,80,EVID-FIN-001",
+            "000777.SZ,CSV公司,2021-12-31,income_statement,NET_PROFIT,净利润,10,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,81,EVID-FIN-002",
+            "000777.SZ,CSV公司,2021-12-31,cashflow_statement,OPERATING_CASHFLOW,经营现金流,12,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,82,EVID-FIN-003",
+            "000777.SZ,CSV公司,2021-12-31,balance_sheet,INVENTORY,存货,20,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,83,EVID-FIN-004",
+            "000777.SZ,CSV公司,2021-12-31,balance_sheet,ACCOUNTS_RECEIVABLE,应收账款,15,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,84,EVID-FIN-005",
+            "000777.SZ,CSV公司,2021-12-31,income_statement,GROSS_PROFIT,毛利,30,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,85,EVID-FIN-006",
+            "000777.SZ,CSV公司,2021-12-31,income_statement,NON_RECURRING_PROFIT,非经常性损益,1,CNY,CNY,DOC-FIN-2021,data/raw/annual.pdf,86,EVID-FIN-007",
+            "000777.SZ,CSV公司,2022-12-31,income_statement,REVENUE,营业收入,120,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,80,EVID-FIN-008",
+            "000777.SZ,CSV公司,2022-12-31,income_statement,NET_PROFIT,净利润,20,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,81,EVID-FIN-009",
+            "000777.SZ,CSV公司,2022-12-31,cashflow_statement,OPERATING_CASHFLOW,经营现金流,5,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,82,EVID-FIN-010",
+            "000777.SZ,CSV公司,2022-12-31,balance_sheet,INVENTORY,存货,60,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,83,EVID-FIN-011",
+            "000777.SZ,CSV公司,2022-12-31,balance_sheet,ACCOUNTS_RECEIVABLE,应收账款,35,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,84,EVID-FIN-012",
+            "000777.SZ,CSV公司,2022-12-31,income_statement,GROSS_PROFIT,毛利,36,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,85,EVID-FIN-013",
+            "000777.SZ,CSV公司,2022-12-31,income_statement,NON_RECURRING_PROFIT,非经常性损益,8,CNY,CNY,DOC-FIN-2022,data/raw/annual.pdf,86,EVID-FIN-014",
         ]
     )
     try:
@@ -66,7 +66,7 @@ def test_financial_risk_prefers_csv_data(monkeypatch) -> None:
             ToolCall(
                 tool_call_id="CALL-001",
                 tool_name=ToolName.FINANCIAL_RISK_ANALYSIS,
-                arguments={"company_id": "000777.SZ"},
+                arguments={"company_ids": ["000777.SZ"]},
                 reason="test",
             )
         )
@@ -82,7 +82,7 @@ def test_financial_csv_company_without_records_returns_error(monkeypatch) -> Non
     test_root = write_financial_csv(
         [
             "company_id,report_period,statement_type,metric_code,metric_name,value,source_doc_id,evidence_id",
-            "000777.SZ,2022A,income_statement,REVENUE,营业收入,120,DOC-FIN,EVID-FIN-001",
+            "000777.SZ,2022-12-31,income_statement,REVENUE,营业收入,120,DOC-FIN,EVID-FIN-001",
         ]
     )
     try:
@@ -92,7 +92,7 @@ def test_financial_csv_company_without_records_returns_error(monkeypatch) -> Non
             ToolCall(
                 tool_call_id="CALL-001",
                 tool_name=ToolName.FINANCIAL_RISK_ANALYSIS,
-                arguments={"company_id": "000888.SZ"},
+                arguments={"company_ids": ["000888.SZ"]},
                 reason="test",
             )
         )
@@ -116,7 +116,7 @@ def test_financial_csv_validation_error(monkeypatch) -> None:
             ToolCall(
                 tool_call_id="CALL-001",
                 tool_name=ToolName.FINANCIAL_RISK_ANALYSIS,
-                arguments={"company_id": "000777.SZ"},
+                arguments={"company_ids": ["000777.SZ"]},
                 reason="test",
             )
         )
@@ -124,6 +124,36 @@ def test_financial_csv_validation_error(monkeypatch) -> None:
         assert result.error.error_type.value == "VALIDATION_FAILED"
     finally:
         shutil.rmtree(test_root, ignore_errors=True)
+
+
+def test_financial_tool_uses_plural_target_period_and_prior_history(monkeypatch) -> None:
+    monkeypatch.setenv("FINANCIAL_DATA_SOURCE", "sample")
+    result = financial_risk_analysis(
+        ToolCall(
+            tool_call_id="CALL-001",
+            tool_name=ToolName.FINANCIAL_RISK_ANALYSIS,
+            arguments={"company_ids": ["000001.SZ"], "report_periods": ["2022-12-31"]},
+            reason="test",
+        )
+    )
+    assert result.status.value == "success"
+    assert result.data["company_ids"] == ["000001.SZ"]
+    assert result.data["report_periods"] == ["2022-12-31"]
+    assert result.data["triggered_rule_ids"]
+
+
+def test_financial_tool_rejects_multiple_companies_in_current_implementation(monkeypatch) -> None:
+    monkeypatch.setenv("FINANCIAL_DATA_SOURCE", "sample")
+    result = financial_risk_analysis(
+        ToolCall(
+            tool_call_id="CALL-001",
+            tool_name=ToolName.FINANCIAL_RISK_ANALYSIS,
+            arguments={"company_ids": ["000001.SZ", "000002.SZ"]},
+            reason="test",
+        )
+    )
+    assert result.status.value == "failed"
+    assert result.error.error_type.value == "INVALID_ARGUMENT"
 
 
 def write_financial_csv(lines: list[str]) -> Path:

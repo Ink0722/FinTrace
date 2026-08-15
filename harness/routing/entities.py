@@ -45,11 +45,11 @@ def extract_company_id(query: str) -> str:
     return "000001.SZ"
 
 
-def extract_period(query: str) -> str | None:
+def extract_report_period(query: str) -> str | None:
     year = re.search(r"(20\d{2})\s*(?:年|A)?", query)
     if not year:
         return None
-    return f"{year.group(1)}A"
+    return f"{year.group(1)}-12-31"
 
 
 def extract_focus_topics(query: str) -> list[str]:

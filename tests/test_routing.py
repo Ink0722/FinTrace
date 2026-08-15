@@ -19,10 +19,16 @@ def test_rule_planner_extracts_structured_arguments() -> None:
     assert ToolName.DOCUMENT_SEARCH in tool_names
     financial_call = next(call for call in plan.tool_calls if call.tool_name == ToolName.FINANCIAL_RISK_ANALYSIS)
     document_call = next(call for call in plan.tool_calls if call.tool_name == ToolName.DOCUMENT_SEARCH)
-    assert financial_call.arguments["company_id"] == "000001.SZ"
-    assert financial_call.arguments["period"] == "2022A"
+    assert financial_call.arguments["company_ids"] == ["000001.SZ"]
+    assert financial_call.arguments["report_periods"] == ["2022-12-31"]
     assert financial_call.arguments["focus_topics"] == ["inventory", "cashflow"]
     assert document_call.arguments["document_types"] == ["inquiry_letter"]
+
+
+def test_comprehensive_analysis_proactively_routes_financial_and_ownership_tools() -> None:
+    plan = route_query("请对000001.SZ做一次综合分析")
+    tool_names = [call.tool_name for call in plan.tool_calls]
+    assert tool_names == [ToolName.FINANCIAL_RISK_ANALYSIS, ToolName.OWNERSHIP_PENETRATION]
 
 
 def test_llm_planner_uses_separate_model_env(monkeypatch) -> None:

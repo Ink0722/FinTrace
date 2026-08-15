@@ -221,7 +221,7 @@ def summarize_tool_result(result: dict) -> str:
     tool_name = result.get("tool_name")
     if tool_name == "financial_risk_analysis":
         return (
-            f"period={data.get('period')}, risk_level={data.get('risk_level')}, "
+            f"report_periods={data.get('report_periods')}, risk_level={data.get('risk_level')}, "
             f"risk_score={data.get('risk_score')}, triggered_rule_ids={data.get('triggered_rule_ids')}"
         )
     if tool_name == "ownership_penetration":

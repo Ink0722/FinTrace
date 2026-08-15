@@ -120,7 +120,7 @@ def _completed_tool_summary_lines(state: AgentState) -> list[str]:
         if result.tool_name.value == "financial_risk_analysis":
             lines.append("")
             lines.append(
-                f"financial_risk_analysis：period={data.get('period')}, "
+                f"financial_risk_analysis：report_periods={data.get('report_periods')}, "
                 f"risk_level={data.get('risk_level')}, "
                 f"risk_score={data.get('risk_score')}, "
                 f"triggered_rule_ids={data.get('triggered_rule_ids', [])}"

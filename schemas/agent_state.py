@@ -13,12 +13,11 @@ class Message(BaseModel):
 
 
 class CurrentContext(BaseModel):
-    company_id: str | None = None
-    company_name: str | None = None
+    company_ids: list[str] = Field(default_factory=list)
+    company_names: list[str] = Field(default_factory=list)
     person_id: str | None = None
     person_name: str | None = None
-    start_period: str | None = None
-    end_period: str | None = None
+    report_periods: list[str] = Field(default_factory=list)
     focus_topics: list[str] = Field(default_factory=list)
 
 

@@ -715,7 +715,7 @@ RAG Chunk 建议格式：
 | 关系数据库 | PostgreSQL，MVP 可用 SQLite |
 | 会话缓存 | Redis 可选，MVP 可不用 |
 | Trace | LangSmith 或自建结构化日志 |
-| 部署 | Docker Compose |
+| 部署 | 本地 CLI 与 FastAPI，配套环境变量和启动说明 |
 | 测试 | Pytest |
 
 第一版不使用：
@@ -1110,7 +1110,6 @@ Web Demo 不建议只做聊天框。至少应有四个区域：
 - reranker；
 - Redis；
 - LangSmith；
-- Docker 多服务完整编排。
 
 ### 17.13 技术实现明确化
 
@@ -1388,5 +1387,5 @@ Codex 首先只完成以下内容，不直接实现业务逻辑：
 4. 为四个工具创建接口占位和示例输入输出；
 5. 创建最小 LangGraph 工作流骨架；
 6. 创建 Pytest 测试骨架；
-7. 创建 `.env.example`、`docker-compose.yml` 和主 README；
+7. 创建 `.env.example`、本地部署说明和主 README；
 8. 等待 Schema 和目录结构确认后，再开始数据和工具实现。

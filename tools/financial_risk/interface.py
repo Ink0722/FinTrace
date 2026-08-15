@@ -8,7 +8,27 @@ from tools.financial_risk.validation import validate_financial_records
 
 
 def financial_risk_analysis(call: ToolCall) -> ToolResult:
-    company_id = call.arguments.get("company_id") or "000001.SZ"
+    company_ids = call.arguments.get("company_ids")
+    if not isinstance(company_ids, list) or len(company_ids) != 1 or not isinstance(company_ids[0], str):
+        return failed_result(
+            call=call,
+            error_type=ErrorType.INVALID_ARGUMENT,
+            message="financial_risk_analysis currently requires company_ids with exactly one company.",
+            details={"company_ids": company_ids},
+            warnings=[],
+        )
+    company_id = company_ids[0]
+    report_periods = call.arguments.get("report_periods")
+    if report_periods is not None and (
+        not isinstance(report_periods, list) or len(report_periods) != 1 or not isinstance(report_periods[0], str)
+    ):
+        return failed_result(
+            call=call,
+            error_type=ErrorType.INVALID_ARGUMENT,
+            message="financial_risk_analysis currently requires report_periods with exactly one target period when provided.",
+            details={"report_periods": report_periods},
+            warnings=[],
+        )
     try:
         dataset = load_financial_dataset(company_id=company_id)
     except Exception as exc:
@@ -20,14 +40,21 @@ def financial_risk_analysis(call: ToolCall) -> ToolResult:
             warnings=[],
         )
     records = dataset.records
+    if report_periods:
+        target_period = report_periods[0]
+        available_periods = {record.report_period for record in records}
+        if target_period not in available_periods:
+            records = []
+        else:
+            records = [record for record in records if record.report_period <= target_period]
     warnings = list(dataset.warnings)
 
-    if dataset.strict and not records:
+    if not records:
         return failed_result(
             call=call,
             error_type=ErrorType.DATA_NOT_AVAILABLE,
-            message=f"No financial records found for company_id={company_id}.",
-            details={"company_id": company_id, "data_source": dataset.source_name},
+            message=f"No financial records found for company_ids={company_ids} and report_periods={report_periods}.",
+            details={"company_ids": company_ids, "report_periods": report_periods, "data_source": dataset.source_name},
             warnings=warnings,
         )
 
@@ -56,8 +83,8 @@ def financial_risk_analysis(call: ToolCall) -> ToolResult:
         tool_name=ToolName.FINANCIAL_RISK_ANALYSIS,
         status=ToolStatus.SUCCESS,
         data={
-            "company_id": company_id,
-            "period": sorted({record.report_period for record in records})[-1],
+            "company_ids": company_ids,
+            "report_periods": report_periods or [sorted({record.report_period for record in records})[-1]],
             "data_source": dataset.source_name,
             "risk_score": total_score,
             "risk_level": "high" if total_score >= 30 else "medium" if total_score >= 15 else "low",

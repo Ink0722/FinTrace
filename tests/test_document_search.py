@@ -37,7 +37,7 @@ def test_document_search_tool_returns_evidence() -> None:
             tool_call_id="CALL-001",
             tool_name=ToolName.DOCUMENT_SEARCH,
             arguments={
-                "company_id": "000001.SZ",
+                "company_ids": ["000001.SZ"],
                 "query": "存货 跌价准备 问询",
                 "document_types": ["annual_report_note", "audit_report", "regulatory_inquiry"],
                 "top_k": 3,
@@ -58,7 +58,7 @@ def test_document_search_prefers_local_knowledge_base(monkeypatch) -> None:
             tool_call_id="CALL-001",
             tool_name=ToolName.DOCUMENT_SEARCH,
             arguments={
-                "company_id": "000001.SZ",
+                "company_ids": ["000001.SZ"],
                 "query": "知识库专用词",
                 "top_k": 3,
             },
@@ -84,7 +84,7 @@ def test_build_kb_and_search_txt_document(monkeypatch) -> None:
                 tool_call_id="CALL-001",
                 tool_name=ToolName.DOCUMENT_SEARCH,
                 arguments={
-                    "company_id": "000001.SZ",
+                    "company_ids": ["000001.SZ"],
                     "query": "存货 跌价准备 问询函",
                     "document_types": ["inquiry_letter"],
                     "top_k": 3,
@@ -130,7 +130,7 @@ def test_build_vector_index_and_hybrid_search_txt_document(monkeypatch) -> None:
                 tool_call_id="CALL-001",
                 tool_name=ToolName.DOCUMENT_SEARCH,
                 arguments={
-                    "company_id": "000001.SZ",
+                    "company_ids": ["000001.SZ"],
                     "query": "inventory impairment",
                     "document_types": ["inquiry_letter"],
                     "top_k": 3,
@@ -166,7 +166,7 @@ def test_section_aware_chunking_writes_parse_report(monkeypatch) -> None:
             ToolCall(
                 tool_call_id="CALL-001",
                 tool_name=ToolName.DOCUMENT_SEARCH,
-                arguments={"company_id": "000001.SZ", "query": "存货 跌价准备", "document_types": ["inquiry_letter"]},
+                arguments={"company_ids": ["000001.SZ"], "query": "存货 跌价准备", "document_types": ["inquiry_letter"]},
                 reason="test",
             )
         )
@@ -203,7 +203,7 @@ def test_docx_table_is_ingested_as_searchable_text(monkeypatch) -> None:
             ToolCall(
                 tool_call_id="CALL-001",
                 tool_name=ToolName.DOCUMENT_SEARCH,
-                arguments={"company_id": "000001.SZ", "query": "库存商品 跌价准备", "document_types": ["annual_report"]},
+                arguments={"company_ids": ["000001.SZ"], "query": "库存商品 跌价准备", "document_types": ["annual_report"]},
                 reason="test",
             )
         )

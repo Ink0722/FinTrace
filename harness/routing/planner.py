@@ -12,7 +12,7 @@ from harness.routing.entities import (
     extract_document_types,
     extract_event_types,
     extract_focus_topics,
-    extract_period,
+    extract_report_period,
 )
 from schemas.enums import ToolName
 from schemas.tool_calls import ExecutionPlan, ToolCall
@@ -24,6 +24,16 @@ KEYWORD_RULES: list[tuple[ToolName, tuple[str, ...]]] = [
     (ToolName.DOCUMENT_SEARCH, ("问询函", "审计报告", "附注", "原文", "依据", "研报", "公告")),
     (ToolName.EVENT_TIMELINE, ("时间线", "经过", "什么时候", "舆情", "事件", "后来", "处罚", "变更")),
 ]
+
+COMPREHENSIVE_ANALYSIS_KEYWORDS = (
+    "综合分析",
+    "全面分析",
+    "尽调",
+    "风险画像",
+    "风险研判",
+    "投资风险",
+    "投资价值",
+)
 
 PLANNER_PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "planner.md"
 
@@ -119,22 +129,21 @@ def normalize_llm_plan(query: str, payload: dict[str, Any]) -> ExecutionPlan:
 
 def select_tools_by_rules(query: str) -> list[ToolName]:
     selected: list[ToolName] = []
+    if any(keyword in query for keyword in COMPREHENSIVE_ANALYSIS_KEYWORDS):
+        selected.extend([ToolName.FINANCIAL_RISK_ANALYSIS, ToolName.OWNERSHIP_PENETRATION])
     for tool_name, keywords in KEYWORD_RULES:
-        if any(keyword in query for keyword in keywords):
+        if tool_name not in selected and any(keyword in query for keyword in keywords):
             selected.append(tool_name)
     if not selected:
         selected.append(ToolName.DOCUMENT_SEARCH)
-    return selected[:3]
+    return selected[:2]
 
 
 def build_common_arguments(query: str) -> dict[str, Any]:
-    args: dict[str, Any] = {
-        "query": query,
-        "company_id": extract_company_id(query),
-    }
-    period = extract_period(query)
-    if period:
-        args["period"] = period
+    args: dict[str, Any] = {"query": query, "company_ids": [extract_company_id(query)]}
+    report_period = extract_report_period(query)
+    if report_period:
+        args["report_periods"] = [report_period]
     focus_topics = extract_focus_topics(query)
     if focus_topics:
         args["focus_topics"] = focus_topics
@@ -142,20 +151,28 @@ def build_common_arguments(query: str) -> dict[str, Any]:
 
 
 def build_tool_arguments(tool_name: ToolName, query: str, common_args: dict[str, Any]) -> dict[str, Any]:
-    arguments = dict(common_args)
+    arguments: dict[str, Any] = {"query": query}
     if tool_name == ToolName.DOCUMENT_SEARCH:
+        arguments["company_ids"] = common_args["company_ids"]
         document_types = extract_document_types(query)
         if document_types:
             arguments["document_types"] = document_types
         arguments.setdefault("top_k", 8)
     elif tool_name == ToolName.EVENT_TIMELINE:
+        arguments["entity_ids"] = common_args["company_ids"]
         event_types = extract_event_types(query)
         if event_types:
             arguments["event_types"] = event_types
     elif tool_name == ToolName.OWNERSHIP_PENETRATION:
-        arguments.setdefault("target_entity_id", common_args["company_id"])
+        arguments.setdefault("target_entity_id", common_args["company_ids"][0])
         arguments.setdefault("max_depth", 5)
         arguments.setdefault("relation_types", ["OWNS", "CONTROLS"])
+    elif tool_name == ToolName.FINANCIAL_RISK_ANALYSIS:
+        arguments["company_ids"] = common_args["company_ids"]
+        if common_args.get("report_periods"):
+            arguments["report_periods"] = common_args["report_periods"]
+        if common_args.get("focus_topics"):
+            arguments["focus_topics"] = common_args["focus_topics"]
     return arguments
 
 

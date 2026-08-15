@@ -12,7 +12,9 @@ tools.event_timeline.interface.event_timeline(call: ToolCall) -> ToolResult
 
 ```text
 event_timeline(call)
-→ 解析 company_id / event_types / start_date / end_date
+→ 校验 entity_ids 为仅含一个公司的数组
+→ 解析 event_types / start_date / end_date
+→ company_id = entity_ids[0]
 → load_event_dataset(company_id)
    → CSV 存在：CsvEventDataSource
    → CSV 不存在且未强制：SampleEventDataSource
@@ -23,6 +25,8 @@ event_timeline(call)
 → summarize_events()
 → ToolResult
 ```
+
+当前结构化事件数据按单一公司加载，因此 `entity_ids` 包含多个主体时返回 `INVALID_ARGUMENT`，不会静默选择第一项。
 
 ## 数据来源
 

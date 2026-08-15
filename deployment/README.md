@@ -1,6 +1,6 @@
 # Deployment
 
-当前部署层只提供本地开发和 Docker 骨架。系统主要入口有两个：
+当前部署层提供本地 CLI 和 FastAPI 运行说明。系统主要入口有两个：
 
 ```text
 CLI      app.cli
@@ -47,13 +47,7 @@ app.api.main.chat()
 → JSON response
 ```
 
-## Docker
-
-```bash
-docker compose up
-```
-
-当前 `docker-compose.yml` 只提供 API 容器骨架，不包含外部数据库、Neo4j、Milvus、Qdrant 或 Elasticsearch。现在的知识库和工具数据均按本地文件读取：
+当前知识库和工具数据均按本地文件读取：
 
 ```text
 data/knowledge_base/

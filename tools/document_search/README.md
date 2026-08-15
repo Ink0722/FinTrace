@@ -13,7 +13,7 @@ tools.document_search.interface.document_search(call: ToolCall) -> ToolResult
 ```text
 document_search(call)
 → 解析 call.arguments
-   - company_id
+   - company_ids：零个或一个公司的数组
    - query
    - document_types
    - start_date / end_date
@@ -33,6 +33,8 @@ document_search(call)
 → evidence_from_hits()
 → ToolResult
 ```
+
+不限定公司时传空数组 `[]`；当前在线实现收到多个公司时返回 `INVALID_ARGUMENT`，不静默丢弃公司。
 
 ## 数据来源
 

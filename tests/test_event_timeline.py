@@ -34,7 +34,7 @@ def test_event_timeline_tool_returns_evidence() -> None:
         ToolCall(
             tool_call_id="CALL-001",
             tool_name=ToolName.EVENT_TIMELINE,
-            arguments={"company_id": "000001.SZ", "event_types": ["regulatory_inquiry"]},
+            arguments={"entity_ids": ["000001.SZ"], "event_types": ["regulatory_inquiry"]},
             reason="test",
         )
     )
@@ -58,7 +58,7 @@ def test_event_timeline_prefers_csv_data(monkeypatch) -> None:
             ToolCall(
                 tool_call_id="CALL-001",
                 tool_name=ToolName.EVENT_TIMELINE,
-                arguments={"company_id": "000777.SZ", "event_types": ["regulatory_inquiry"]},
+                arguments={"entity_ids": ["000777.SZ"], "event_types": ["regulatory_inquiry"]},
                 reason="test",
             )
         )
@@ -86,7 +86,7 @@ def test_event_csv_company_without_records_returns_error(monkeypatch) -> None:
             ToolCall(
                 tool_call_id="CALL-001",
                 tool_name=ToolName.EVENT_TIMELINE,
-                arguments={"company_id": "000888.SZ"},
+                arguments={"entity_ids": ["000888.SZ"]},
                 reason="test",
             )
         )
@@ -110,7 +110,7 @@ def test_event_csv_validation_error(monkeypatch) -> None:
             ToolCall(
                 tool_call_id="CALL-001",
                 tool_name=ToolName.EVENT_TIMELINE,
-                arguments={"company_id": "000777.SZ"},
+                arguments={"entity_ids": ["000777.SZ"]},
                 reason="test",
             )
         )

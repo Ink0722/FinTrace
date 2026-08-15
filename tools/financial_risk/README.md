@@ -12,7 +12,9 @@ tools.financial_risk.interface.financial_risk_analysis(call: ToolCall) -> ToolRe
 
 ```text
 financial_risk_analysis(call)
-→ company_id = call.arguments["company_id"] 或默认 000001.SZ
+→ 校验 company_ids 为仅含一个公司的数组
+→ 可选校验 report_periods 为报告期数组
+→ company_id = company_ids[0]
 → load_financial_dataset(company_id)
    → CSV 存在：CsvFinancialDataSource
    → CSV 不存在且未强制：SampleFinancialDataSource
@@ -23,6 +25,17 @@ financial_risk_analysis(call)
 → evidence_from_records()
 → ToolResult
 ```
+
+当前实现一次分析一个公司，但公共参数保持稳定数组类型：
+
+```json
+{
+  "company_ids": ["000001.SZ"],
+  "report_periods": ["2022-12-31"]
+}
+```
+
+`company_ids` 包含多个公司时返回 `INVALID_ARGUMENT`，不会静默选择第一项。
 
 ## 数据来源
 
@@ -43,7 +56,7 @@ FINANCIAL_RECORDS_PATH=data/financial/financial_records.csv
 
 ```csv
 company_id,company_name,report_period,statement_type,metric_code,metric_name,value,unit,currency,source_doc_id,source_path,page,evidence_id
-000001.SZ,示例公司,2022A,balance_sheet,INVENTORY,存货,310,CNY,CNY,ANNUAL-2022,data/raw_documents/annual_report.pdf,86,EVID-FIN-001
+000001.SZ,示例公司,2022-12-31,balance_sheet,INVENTORY,存货,310,CNY,CNY,ANNUAL-2022,data/raw_documents/annual_report.pdf,86,EVID-FIN-001
 ```
 
 常用 `metric_code`：

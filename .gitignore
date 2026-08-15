@@ -8,6 +8,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.tmp_tests/
+tests/test_artifacts/
 .coverage
 coverage.xml
 htmlcov/

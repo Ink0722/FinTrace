@@ -1,8 +1,8 @@
 from datetime import date
 
-from schemas.enums import ToolName, ToolStatus
+from schemas.enums import ErrorType, ToolName, ToolStatus
 from schemas.tool_calls import ToolCall
-from schemas.tool_results import ToolMetrics, ToolResult
+from schemas.tool_results import ToolError, ToolMetrics, ToolResult
 from tools.document_search.kb_loader import knowledge_base_available, load_kb_chunks, resolve_kb_path
 from tools.document_search.sample_data import load_sample_chunks
 from tools.document_search.search import bm25_search, evidence_from_hits, filter_chunks
@@ -11,7 +11,20 @@ from tools.document_search.vector_search import merge_hybrid_hits, vector_index_
 
 def document_search(call: ToolCall) -> ToolResult:
     query = call.arguments.get("query") or ""
-    company_id = call.arguments.get("company_id") or "000001.SZ"
+    company_ids = call.arguments.get("company_ids") or []
+    if not isinstance(company_ids, list) or not all(isinstance(item, str) for item in company_ids) or len(company_ids) > 1:
+        return ToolResult(
+            tool_call_id=call.tool_call_id,
+            tool_name=ToolName.DOCUMENT_SEARCH,
+            status=ToolStatus.FAILED,
+            error=ToolError(
+                error_type=ErrorType.INVALID_ARGUMENT,
+                message="document_search currently supports zero or one company in company_ids.",
+                retryable=False,
+                details={"company_ids": company_ids},
+            ),
+        )
+    company_id = company_ids[0] if company_ids else None
     document_types = call.arguments.get("document_types")
     top_k = int(call.arguments.get("top_k") or 8)
     pool_k = int(call.arguments.get("pool_k") or max(top_k * 5, 50))
@@ -75,7 +88,7 @@ def document_search(call: ToolCall) -> ToolResult:
         tool_name=ToolName.DOCUMENT_SEARCH,
         status=ToolStatus.SUCCESS,
         data={
-            "company_id": company_id,
+            "company_ids": company_ids,
             "query": query,
             "top_k": top_k,
             "pool_k": pool_k,

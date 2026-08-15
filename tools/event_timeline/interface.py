@@ -9,7 +9,16 @@ from tools.event_timeline.validation import validate_events
 
 
 def event_timeline(call: ToolCall) -> ToolResult:
-    company_id = call.arguments.get("company_id") or "000001.SZ"
+    entity_ids = call.arguments.get("entity_ids")
+    if not isinstance(entity_ids, list) or len(entity_ids) != 1 or not isinstance(entity_ids[0], str):
+        return failed_result(
+            call=call,
+            error_type=ErrorType.INVALID_ARGUMENT,
+            message="event_timeline currently requires entity_ids with exactly one company.",
+            details={"entity_ids": entity_ids},
+            warnings=[],
+        )
+    company_id = entity_ids[0]
     event_types = call.arguments.get("event_types")
     start_date = date.fromisoformat(call.arguments["start_date"]) if call.arguments.get("start_date") else None
     end_date = date.fromisoformat(call.arguments["end_date"]) if call.arguments.get("end_date") else None
@@ -60,7 +69,7 @@ def event_timeline(call: ToolCall) -> ToolResult:
         tool_name=ToolName.EVENT_TIMELINE,
         status=ToolStatus.SUCCESS,
         data={
-            "company_id": company_id,
+            "entity_ids": entity_ids,
             "data_source": dataset.source_name,
             "event_types": event_types,
             "events": [event.model_dump() for event in events],
