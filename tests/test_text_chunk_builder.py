@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from data_pipeline.text.chunk_builder import (
+from data_pipeline.documents.chunk_builder import (
     CHUNK_KEYS,
     ChunkBuildError,
     build_chunks,
 )
-from data_pipeline.text.chunker import ChunkingConfig, chunk_text
+from data_pipeline.documents.chunker import ChunkingConfig, chunk_text
 
 
 def _compact(text: str) -> str:
@@ -227,7 +227,7 @@ def test_build_chunks_writes_minimal_schema_and_quality_artifacts(
     workspace_tmp_path: Path,
 ) -> None:
     data_root = workspace_tmp_path / "data"
-    data_dir = data_root / "text_corpus"
+    data_dir = data_root / "processed" / "documents"
     documents_path = data_dir / "documents.jsonl"
     text = "一、经营情况\n公司营业收入增长。\n\n二、风险提示\n原材料价格可能波动。"
     _write_jsonl(
@@ -270,7 +270,7 @@ def test_build_chunks_writes_minimal_schema_and_quality_artifacts(
 
 def test_build_chunks_failure_does_not_replace_existing_output(workspace_tmp_path: Path) -> None:
     data_root = workspace_tmp_path / "data"
-    data_dir = data_root / "text_corpus"
+    data_dir = data_root / "processed" / "documents"
     documents_path = data_dir / "documents.jsonl"
     output_path = data_dir / "chunks.jsonl"
     duplicate = {

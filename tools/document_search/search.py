@@ -8,7 +8,15 @@ from schemas.evidence import Evidence, EvidenceSource
 
 
 def tokenize(text: str) -> list[str]:
-    tokens = re.findall(r"[A-Za-z0-9_.]+|[\u4e00-\u9fff]", text.lower())
+    tokens: list[str] = []
+    for value in re.findall(r"[A-Za-z0-9_.]+|[\u4e00-\u9fff]+", text.lower()):
+        if not re.fullmatch(r"[\u4e00-\u9fff]+", value):
+            tokens.append(value)
+            continue
+        if len(value) == 1:
+            tokens.append(value)
+        else:
+            tokens.extend(value[index : index + 2] for index in range(len(value) - 1))
     return tokens
 
 

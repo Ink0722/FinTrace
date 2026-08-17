@@ -28,8 +28,8 @@ def is_within(path: Path, directory: Path) -> bool:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     data_dir = args.data_dir.resolve()
-    jsonl_path = data_dir / "jsonl" / "announcements.jsonl"
-    documents_dir = (data_dir / "documents" / "announcements").resolve()
+    jsonl_path = data_dir / "normalized" / "announcements.jsonl"
+    documents_dir = (data_dir / "source" / "announcements").resolve()
     if not jsonl_path.is_file():
         raise FileNotFoundError(f"Announcement JSONL does not exist: {jsonl_path}")
 
@@ -92,7 +92,9 @@ def main(argv: list[str] | None = None) -> int:
             handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
     os.replace(temporary_jsonl, jsonl_path)
 
-    manifest_path = data_dir / "announcement_exclusions.csv"
+    output_dir = data_dir / "processed" / "competition"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_dir / "announcement_exclusions.csv"
     temporary_manifest = manifest_path.with_suffix(".csv.tmp")
     fieldnames = [
         "id",
@@ -110,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         writer.writerows(manifest_rows)
     os.replace(temporary_manifest, manifest_path)
 
-    report_path = data_dir / "announcement_exclusion_report.json"
+    report_path = output_dir / "announcement_exclusion_report.json"
     temporary_report = report_path.with_suffix(".json.tmp")
     report = {
         "finished_at": excluded_at,

@@ -16,6 +16,11 @@ class ToolError(BaseModel):
 
 class ToolMetrics(BaseModel):
     execution_time_ms: int = 0
+    metadata_time_ms: int = 0
+    lexical_search_time_ms: int = 0
+    embedding_time_ms: int = 0
+    vector_search_time_ms: int = 0
+    rerank_time_ms: int = 0
 
 
 class ToolResult(BaseModel):

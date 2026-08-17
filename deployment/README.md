@@ -50,7 +50,7 @@ app.api.main.chat()
 当前知识库和工具数据均按本地文件读取：
 
 ```text
-data/knowledge_base/
+data/indexes/document_search/
 data/financial/
 data/ownership/
 data/events/

@@ -308,7 +308,7 @@ def announcement_record(
     pdf_url = str(record.get("n_info_annlink") or "") or None
     document_id = str(record.get("id") or record.get("object_id") or "unknown").strip("{}")
     document_name = re.sub(r"[^A-Za-z0-9._-]+", "_", document_id) + ".txt"
-    output_path = data_dir / "documents" / "announcements" / document_name
+    output_path = data_dir / "source" / "announcements" / document_name
     try:
         document_path = output_path.relative_to(Path.cwd()).as_posix()
     except ValueError:
@@ -641,7 +641,7 @@ def write_jsonl_atomic(path: Path, records: Iterable[dict]) -> None:
 
 
 def load_review_issues(data_dir: Path) -> dict[str, str]:
-    review_path = data_dir / "announcement_download_review.csv"
+    review_path = data_dir / "processed" / "competition" / "announcement_download_review.csv"
     if not review_path.is_file():
         return {}
     with review_path.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -682,7 +682,7 @@ def repair_announcements(
     retries: int,
     timeout_only: bool = False,
 ) -> dict:
-    announcements_path = data_dir / "jsonl" / "announcements.jsonl"
+    announcements_path = data_dir / "normalized" / "announcements.jsonl"
     if not announcements_path.is_file():
         raise FileNotFoundError(f"Announcement JSONL does not exist: {announcements_path}")
 
@@ -776,14 +776,18 @@ def repair_announcements(
         if timeout_only
         else "announcement_repair_report.json"
     )
-    report_path = data_dir / report_name
+    report_path = data_dir / "processed" / "competition" / report_name
+    report_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_report = report_path.with_suffix(".json.tmp")
     temporary_report.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     os.replace(temporary_report, report_path)
     if timeout_only:
-        write_timeout_csv(data_dir / "announcement_timeout_remaining.csv", remaining_timeouts)
+        write_timeout_csv(
+            data_dir / "processed" / "competition" / "announcement_timeout_remaining.csv",
+            remaining_timeouts,
+        )
     return report
 
 
@@ -954,34 +958,34 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     source_root = find_source_root(args.input_dir)
-    jsonl_dir = data_dir / "jsonl"
+    normalized_dir = data_dir / "normalized"
     categories = load_announcement_categories(find_one(source_root / "3", "*.txt"))
     jobs = [
-        (find_one(source_root / "1", "*.xlsx"), jsonl_dir / "questions.jsonl", None),
-        (find_one(source_root / "2", "*.xlsx"), jsonl_dir / "shareholders.jsonl", None),
+        (find_one(source_root / "1", "*.xlsx"), data_dir / "evaluation" / "questions.jsonl", None),
+        (find_one(source_root / "2", "*.xlsx"), normalized_dir / "shareholders.jsonl", None),
         (
             find_one(source_root / "3", "*.xlsx"),
-            jsonl_dir / "announcements.jsonl",
+            normalized_dir / "announcements.jsonl",
             categories,
         ),
         (
             find_one(source_root / "4", "asharebalancesheet_*.csv"),
-            jsonl_dir / "balance_sheets.jsonl",
+            normalized_dir / "balance_sheets.jsonl",
             None,
         ),
         (
             find_one(source_root / "4", "ashareincome_*.csv"),
-            jsonl_dir / "income_statements.jsonl",
+            normalized_dir / "income_statements.jsonl",
             None,
         ),
         (
             find_one(source_root / "4", "asharecashflow_*.csv"),
-            jsonl_dir / "cashflows.jsonl",
+            normalized_dir / "cashflows.jsonl",
             None,
         ),
         (
             find_one(source_root / "5", "rr_main_*.csv"),
-            jsonl_dir / "research_reports.jsonl",
+            normalized_dir / "research_reports.jsonl",
             None,
         ),
     ]
@@ -1015,7 +1019,7 @@ def main(argv: list[str] | None = None) -> int:
         "datasets": {Path(result.output).stem: result.as_dict() for result in results},
         "total_rows": sum(result.rows for result in results),
     }
-    report_path = data_dir / "preprocess_report.json"
+    report_path = data_dir / "processed" / "competition" / "preprocess_report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_report = report_path.with_suffix(".json.tmp")
     temporary_report.write_text(

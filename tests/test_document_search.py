@@ -2,14 +2,19 @@ from datetime import date
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 from uuid import uuid4
+
+import faiss
+import numpy as np
 
 from schemas.enums import ToolName
 from schemas.tool_calls import ToolCall
-from knowledge_base.document_ingestion.build_kb import main as build_kb_main
+from data_pipeline.documents.build_file_index import main as build_kb_main
 from tools.document_search.interface import document_search
 from tools.document_search.sample_data import load_sample_chunks
 from tools.document_search.search import bm25_search, filter_chunks
+from tools.document_search.vector_search import clear_vector_cache
 
 
 def test_filter_chunks_by_company_and_type() -> None:
@@ -31,7 +36,9 @@ def test_bm25_search_returns_relevant_chunk() -> None:
     assert "存货" in hits[0].chunk.text
 
 
-def test_document_search_tool_returns_evidence() -> None:
+def test_document_search_tool_returns_evidence_in_explicit_demo_mode(monkeypatch) -> None:
+    monkeypatch.setenv("FINTRACE_KB_PATH", str(Path(".tmp_tests") / "missing-demo.sqlite"))
+    monkeypatch.setenv("FINTRACE_DOCUMENT_SEARCH_DEMO_MODE", "true")
     result = document_search(
         ToolCall(
             tool_call_id="CALL-001",
@@ -48,10 +55,69 @@ def test_document_search_tool_returns_evidence() -> None:
     assert result.status.value == "success"
     assert result.data["hits"]
     assert result.evidence
+    assert result.data["source"] == "sample"
+
+
+def test_document_search_fails_when_kb_is_missing_outside_demo(monkeypatch) -> None:
+    monkeypatch.setenv("FINTRACE_KB_PATH", str(Path(".tmp_tests") / "missing-production.sqlite"))
+    monkeypatch.setenv("FINTRACE_DOCUMENT_SEARCH_DEMO_MODE", "false")
+    result = document_search(_call({"query": "存货风险", "company_ids": ["000001.SZ"]}))
+    assert result.status.value == "failed"
+    assert result.error is not None
+    assert result.error.error_type.value == "DATA_NOT_AVAILABLE"
+
+
+def test_document_search_rejects_invalid_arguments(monkeypatch) -> None:
+    monkeypatch.setenv("FINTRACE_KB_PATH", str(Path(".tmp_tests") / "missing-invalid.sqlite"))
+    result = document_search(_call({"query": " ", "top_k": 999}))
+    assert result.status.value == "failed"
+    assert result.error is not None
+    assert result.error.error_type.value == "INVALID_ARGUMENT"
+
+
+def test_filtered_vector_search_scores_only_matching_company(monkeypatch) -> None:
+    test_root = Path(".tmp_tests") / f"document_vector_filter_{uuid4().hex}"
+    raw_dir = test_root / "raw_documents"
+    kb_dir = test_root / "knowledge_base"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    (raw_dir / "000001.SZ_2023-05-12_research_report.txt").write_text(
+        "甲公司存货风险说明。", encoding="utf-8"
+    )
+    (raw_dir / "600519.SH_2023-05-12_research_report.txt").write_text(
+        "乙公司存货风险说明。", encoding="utf-8"
+    )
+    try:
+        assert build_kb_main(["--raw-dir", str(raw_dir), "--kb-dir", str(kb_dir)]) == 0
+        _write_test_vectors(kb_dir)
+        monkeypatch.setenv("FINTRACE_KB_PATH", str(kb_dir / "fintrace_kb.sqlite"))
+        monkeypatch.setenv("FINTRACE_DOCUMENT_SEARCH_DEMO_MODE", "false")
+        monkeypatch.setattr(
+            "tools.document_search.vector_search.build_embedding_client",
+            lambda: _FakeEmbeddingClient(),
+        )
+        clear_vector_cache()
+        result = document_search(
+            _call(
+                {
+                    "query": "存货风险",
+                    "company_ids": ["000001.SZ"],
+                    "mode": "vector",
+                    "top_k": 1,
+                    "pool_k": 1,
+                }
+            )
+        )
+        assert result.status.value == "success"
+        assert result.data["hits"][0]["chunk"]["company_id"] == "000001.SZ"
+        assert result.data["retrieval_debug"]["vector_strategy"] == "filtered_exact"
+        assert result.metrics.vector_search_time_ms >= 0
+    finally:
+        clear_vector_cache()
+        shutil.rmtree(test_root, ignore_errors=True)
 
 
 def test_document_search_prefers_local_knowledge_base(monkeypatch) -> None:
-    kb_path = Path("data/knowledge_base/fintrace_kb.sqlite")
+    kb_path = Path("data/indexes/document_search/fintrace_kb.sqlite")
     monkeypatch.setenv("FINTRACE_KB_PATH", str(kb_path))
     result = document_search(
         ToolCall(
@@ -99,51 +165,6 @@ def test_build_kb_and_search_txt_document(monkeypatch) -> None:
         assert result.evidence[0].source.source_path.endswith("000001.SZ_2023-05-12_inquiry_letter.txt")
         assert result.evidence[0].fact["retrieval"]["final_score"] > 0
         assert (kb_dir / "parse_report.json").exists()
-    finally:
-        shutil.rmtree(test_root, ignore_errors=True)
-
-
-def test_build_vector_index_and_hybrid_search_txt_document(monkeypatch) -> None:
-    test_root = Path(".tmp_tests") / f"document_vector_kb_{uuid4().hex}"
-    raw_dir = test_root / "raw_documents/test_company/inquiry_letter"
-    kb_dir = test_root / "knowledge_base"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    source_file = raw_dir / "000001.SZ_2023-05-12_inquiry_letter.txt"
-    source_file.write_text("inventory impairment inquiry letter inventory impairment", encoding="utf-8")
-    monkeypatch.setenv("EMBEDDING_PROVIDER", "hash")
-    try:
-        exit_code = build_kb_main(
-            [
-                "--raw-dir",
-                str(test_root / "raw_documents/test_company"),
-                "--kb-dir",
-                str(kb_dir),
-                "--build-vector",
-            ]
-        )
-        assert exit_code == 0
-        assert (kb_dir / "vector.faiss").exists()
-        assert (kb_dir / "vector_ids.json").exists()
-        monkeypatch.setenv("FINTRACE_KB_PATH", str(kb_dir / "fintrace_kb.sqlite"))
-        result = document_search(
-            ToolCall(
-                tool_call_id="CALL-001",
-                tool_name=ToolName.DOCUMENT_SEARCH,
-                arguments={
-                    "company_ids": ["000001.SZ"],
-                    "query": "inventory impairment",
-                    "document_types": ["inquiry_letter"],
-                    "top_k": 3,
-                    "mode": "hybrid",
-                },
-                reason="test",
-            )
-        )
-        assert result.data["source"] == "knowledge_base"
-        assert result.data["mode"] == "hybrid"
-        assert result.data["hits"]
-        assert result.data["retrieval_debug"]["vector_available"] is True
-        assert result.data["hits"][0]["retrieval"]["source"] == "hybrid"
     finally:
         shutil.rmtree(test_root, ignore_errors=True)
 
@@ -238,3 +259,51 @@ def test_build_kb_skip_unchanged_reports_skipped_files() -> None:
         assert report["documents"][0]["parse_status"] == "skipped_unchanged"
     finally:
         shutil.rmtree(test_root, ignore_errors=True)
+
+
+class _FakeEmbeddingClient:
+    model = "text-embedding-v4"
+    dimension = 2
+    api_mode = "compatible"
+
+    def embed_query(self, text: str) -> np.ndarray:
+        del text
+        return np.asarray([1.0, 0.0], dtype="float32")
+
+
+def _call(arguments: dict) -> ToolCall:
+    return ToolCall(
+        tool_call_id="CALL-001",
+        tool_name=ToolName.DOCUMENT_SEARCH,
+        arguments=arguments,
+        reason="test",
+    )
+
+
+def _write_test_vectors(kb_dir: Path) -> None:
+    with sqlite3.connect(kb_dir / "fintrace_kb.sqlite") as conn:
+        rows = conn.execute("SELECT chunk_id, company_id FROM chunks ORDER BY chunk_id").fetchall()
+    vector_ids = [row[0] for row in rows]
+    embeddings = np.asarray(
+        [[1.0, 0.0] if row[1] == "000001.SZ" else [0.0, 1.0] for row in rows],
+        dtype="float32",
+    )
+    np.save(kb_dir / "embeddings.npy", embeddings)
+    index = faiss.IndexFlatIP(2)
+    index.add(embeddings)
+    faiss.write_index(index, str(kb_dir / "vector.faiss"))
+    (kb_dir / "vector_ids.json").write_text(
+        json.dumps(vector_ids, ensure_ascii=False), encoding="utf-8"
+    )
+    (kb_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "embedding": {
+                    "model": "text-embedding-v4",
+                    "dimension": 2,
+                    "api_mode": "compatible",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )

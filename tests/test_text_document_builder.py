@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from data_pipeline.text.cleaner import clean_text, remove_leading_title_lines
-from data_pipeline.text.document_builder import DocumentBuildError, build_documents
+from data_pipeline.documents.cleaner import clean_text, remove_leading_title_lines
+from data_pipeline.documents.document_builder import DocumentBuildError, build_documents
 
 
 def write_jsonl(path: Path, records: list[dict]) -> None:
@@ -78,12 +78,12 @@ def test_remove_leading_title_lines_is_conservative(
 def test_build_documents_maps_sources_and_reports_exclusions() -> None:
     data_dir = Path("tests/.text_document_builder_data")
     try:
-        announcement_text = data_dir / "documents" / "announcements" / "1001.txt"
+        announcement_text = data_dir / "source" / "announcements" / "1001.txt"
         announcement_text.parent.mkdir(parents=True)
         announcement_text.write_text("公告正文\r\n\r\n  第二段", encoding="utf-8")
 
         write_jsonl(
-            data_dir / "jsonl" / "announcements.jsonl",
+            data_dir / "normalized" / "announcements.jsonl",
             [
                 sample_announcement(announcement_text),
                 sample_announcement(
@@ -95,7 +95,7 @@ def test_build_documents_maps_sources_and_reports_exclusions() -> None:
             ],
         )
         write_jsonl(
-            data_dir / "jsonl" / "research_reports.jsonl",
+            data_dir / "normalized" / "research_reports.jsonl",
             [
                 sample_research(),
                 sample_research(report_id="5971494", sec_code="920088", exchange_code="XBEI", first_cover=1),
@@ -104,7 +104,7 @@ def test_build_documents_maps_sources_and_reports_exclusions() -> None:
         )
 
         report = build_documents(data_dir=data_dir)
-        documents = read_jsonl(data_dir / "text_corpus" / "documents.jsonl")
+        documents = read_jsonl(data_dir / "processed" / "documents" / "documents.jsonl")
 
         assert report["total_documents"] == 3
         assert report["datasets"]["announcement"]["skipped"] == {"excluded_no_text_layer": 1}
@@ -133,7 +133,7 @@ def test_build_documents_maps_sources_and_reports_exclusions() -> None:
         assert research["publisher"] == "东吴证券"
         assert research["tags"] == ["业绩点评", "买入", "维持"]
         assert research["text"] == "公司实现营业收入增长。\n\n风险提示。"
-        assert research["source_ref"].endswith("data/jsonl/research_reports.jsonl#5971493")
+        assert research["source_ref"].endswith("data/normalized/research_reports.jsonl#5971493")
 
         first_cover = documents[2]
         assert first_cover["company_id"] == "920088.BJ"
@@ -145,13 +145,13 @@ def test_build_documents_maps_sources_and_reports_exclusions() -> None:
 def test_duplicate_document_id_fails_without_replacing_existing_output() -> None:
     data_dir = Path("tests/.text_document_duplicate_data")
     try:
-        announcement_text = data_dir / "documents" / "announcements" / "1001.txt"
+        announcement_text = data_dir / "source" / "announcements" / "1001.txt"
         announcement_text.parent.mkdir(parents=True)
         announcement_text.write_text("公告正文", encoding="utf-8")
         duplicate = sample_announcement(announcement_text)
-        write_jsonl(data_dir / "jsonl" / "announcements.jsonl", [duplicate, duplicate])
-        write_jsonl(data_dir / "jsonl" / "research_reports.jsonl", [])
-        output = data_dir / "text_corpus" / "documents.jsonl"
+        write_jsonl(data_dir / "normalized" / "announcements.jsonl", [duplicate, duplicate])
+        write_jsonl(data_dir / "normalized" / "research_reports.jsonl", [])
+        output = data_dir / "processed" / "documents" / "documents.jsonl"
         output.parent.mkdir(parents=True)
         output.write_text("existing\n", encoding="utf-8")
 

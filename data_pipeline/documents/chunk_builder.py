@@ -9,8 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
-from data_pipeline.text.chunker import ChunkingConfig, chunk_text
-from data_pipeline.text.document_builder import display_path, length_summary, write_json_atomic
+from data_pipeline.documents.chunker import ChunkingConfig, chunk_text
+from data_pipeline.documents.document_builder import display_path, length_summary, write_json_atomic
 
 
 CHUNK_KEYS = {
@@ -40,10 +40,11 @@ def build_chunks(
     config: ChunkingConfig | None = None,
 ) -> dict[str, Any]:
     data_dir = data_dir.resolve()
-    documents_path = (documents_path or data_dir / "text_corpus" / "documents.jsonl").resolve()
-    output_path = (output_path or data_dir / "text_corpus" / "chunks.jsonl").resolve()
-    report_path = (report_path or data_dir / "text_corpus" / "chunk_quality.json").resolve()
-    manifest_path = (manifest_path or data_dir / "text_corpus" / "chunk_manifest.json").resolve()
+    corpus_dir = data_dir / "processed" / "documents"
+    documents_path = (documents_path or corpus_dir / "documents.jsonl").resolve()
+    output_path = (output_path or corpus_dir / "chunks.jsonl").resolve()
+    report_path = (report_path or corpus_dir / "chunk_quality.json").resolve()
+    manifest_path = (manifest_path or corpus_dir / "chunk_manifest.json").resolve()
     config = config or ChunkingConfig()
     if not documents_path.is_file():
         raise FileNotFoundError(f"Required Document corpus does not exist: {documents_path}")

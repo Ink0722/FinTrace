@@ -22,7 +22,7 @@
 唯一输入为：
 
 ```text
-data/text_corpus/documents.jsonl
+data/processed/documents/documents.jsonl
 ```
 
 当前语料包含 62,400 篇 Document，其中公告 7,278 篇、研报摘要 55,122 篇。Chunk 构建器只读取 `document_id`、`document_type` 和 `text`；公司、日期、标题、发布方等元数据仍由 Document 保存。
@@ -30,17 +30,17 @@ data/text_corpus/documents.jsonl
 ### 2.2 输出
 
 ```text
-data/text_corpus/chunks.jsonl
-data/text_corpus/chunk_quality.json
-data/text_corpus/chunk_manifest.json
+data/processed/documents/chunks.jsonl
+data/processed/documents/chunk_quality.json
+data/processed/documents/chunk_manifest.json
 ```
 
 上述三个文件保留为 V1 对照。改进后的 V2 独立保存，不覆盖 V1：
 
 ```text
-data/text_corpus/chunks_v2.jsonl
-data/text_corpus/chunk_quality_v2.json
-data/text_corpus/chunk_manifest_v2.json
+data/processed/documents/chunks_v2.jsonl
+data/processed/documents/chunk_quality_v2.json
+data/processed/documents/chunk_manifest_v2.json
 ```
 
 三类文件职责不同：
@@ -200,7 +200,7 @@ V2 在章节分区后对每个候选区域执行一次结构碎片检查。判�
 
 ## 5. 构建工作流
 
-代码位于 `data_pipeline/text/`：
+代码位于 `data_pipeline/documents/`：
 
 ```text
 cli.py
@@ -272,8 +272,8 @@ V2 的目标不是让所有 Chunk 都达到200字，而是消除没有独立语�
 质量报告和 Manifest 分别保存在：
 
 ```text
-data/text_corpus/chunk_quality_v2.json
-data/text_corpus/chunk_manifest_v2.json
+data/processed/documents/chunk_quality_v2.json
+data/processed/documents/chunk_manifest_v2.json
 ```
 
 ---
@@ -283,18 +283,18 @@ data/text_corpus/chunk_manifest_v2.json
 默认构建命令：
 
 ```powershell
-F:\conda_envs\FinTrace\python.exe -m data_pipeline.text.cli build-chunks `
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.cli build-chunks `
   --data-dir data `
   --version chunks-v2 `
-  --output data\text_corpus\chunks_v2.jsonl `
-  --report data\text_corpus\chunk_quality_v2.json `
-  --manifest data\text_corpus\chunk_manifest_v2.json
+  --output data\processed\documents\chunks_v2.jsonl `
+  --report data\processed\documents\chunk_quality_v2.json `
+  --manifest data\processed\documents\chunk_manifest_v2.json
 ```
 
 需要进行实验时可以显式覆盖参数：
 
 ```powershell
-F:\conda_envs\FinTrace\python.exe -m data_pipeline.text.cli build-chunks `
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.cli build-chunks `
   --data-dir data `
   --version chunks-exp-01 `
   --target-chars 600 `
@@ -330,9 +330,9 @@ Manifest 中同时保存输入和输出 SHA-256。评测、标注和向量索引
 
 ### 8.1 Embedding 输入内容
 
-当前代码尚未实现 Embedding 构建。本节冻结下一阶段的输入规范，避免实现时直接把 `chunk.text` 或全部元数据无选择地送入模型。
+Embedding 构建已经由 `data_pipeline.documents.build_index` 实现。本节同时作为输入规范，避免直接把 `chunk.text` 或全部元数据无选择地送入模型。
 
-实际生成向量时，先用 `document_id` 关联 `chunks.jsonl` 与 `documents.jsonl`，再构造一个仅用于向量化的 `embedding_text`。固定字段顺序如下：
+实际生成向量时，先用 `document_id` 关联 `chunks_v2.jsonl` 与 `documents.jsonl`，再构造一个仅用于向量化的 `embedding_text`。固定字段顺序如下：
 
 ```text
 文档类型：公告
@@ -424,3 +424,54 @@ chunk_version
 ```
 
 股票代码、日期范围和文档类型等明确约束应同时用于 metadata 过滤，不应只依赖向量相似度。文档向量负责语义召回，结构化条件负责缩小检索范围，两者共同组成最终检索条件。
+
+### 8.5 构建命令与产物
+
+成本估算不会调用模型：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index --estimate-only
+```
+
+本地生成 Batch 请求文件（不调用 API）：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index prepare
+```
+
+提交与完成构建：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index submit
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index status
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index collect
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index finalize
+```
+
+若希望先验证单个分片，可指定提交：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index submit --shard-id shard-0000
+```
+
+`--shard-id` 可重复使用；不传时提交全部尚未获得 Batch 任务 ID 的分片。已经提交的分片会依据本地状态自动跳过。
+
+构建器固定校验 `documents.jsonl`、`chunks_v2.jsonl` 和 `chunk_manifest_v2.json` 的 SHA-256，使用 Qwen `text-embedding-v4` 的 OpenAI 兼容 Batch File API 生成 1024 维稠密向量。每个 Batch 请求最多包含 10 条 Embedding 文本，默认每 20,000 个 Chunk 形成一个独立任务。在线查询使用同一模型、维度和兼容接口同步生成问题向量，避免文档侧和查询侧使用不同接口语义。
+
+本地状态保存在 `data/indexes/document_search/.batch_build/state.json`。下载结果不依赖返回行顺序，而是使用 `custom_id + data.index` 对应到 `vector_row`；缺失、重复、错误维度、非有限值或尚未重试成功的请求都会阻止 `finalize`。完整向量归一化后写入 `embeddings.npy`，FAISS 使用精确的 `IndexFlatIP`，因此内积等价于余弦相似度。正式完成后生成：
+
+对于数量极少且已经人工审查的请求级失败，可以显式执行 `finalize --allow-partial`。该模式只接受错误文件能够完整解释的缺失行，将成功向量按原始行序压缩为连续索引；SQLite 继续保留全部 Chunk，因此失败 Chunk 仍可通过 BM25 召回。`manifest.json` 记录 `vector_count`、`excluded_vector_count`、`vector_coverage` 和 `partial_index`，`embedding_failures.jsonl` 记录每个被排除 Chunk 的文档、公司、原始行号及错误原因。未知缺失或数据异常仍然失败，不能使用零向量或伪造向量补位。
+
+```text
+data/indexes/document_search/
+  fintrace_kb.sqlite
+  embeddings.npy
+  vector.faiss
+  vector_ids.json
+  build_progress.json
+  batch_jobs.json
+  embedding_failures.jsonl
+  manifest.json
+```
+
+`manifest.json` 同时保存估算 Token 和 API 返回的实际 Token。实际计费必须以后者为准。

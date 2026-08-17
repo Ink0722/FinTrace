@@ -70,27 +70,27 @@ research_report
 ## 4. 总体流程
 
 ```text
-data/jsonl/announcements.jsonl
+data/normalized/announcements.jsonl
         +
-data/documents/announcements/*.txt
+data/source/announcements/*.txt
         |
         |  字段校验、正文读取、保守清理
         v
-data_pipeline.text.document_builder
+data_pipeline.documents.document_builder
         ^
         |  字段校验、代码标准化、摘要读取
         |
-data/jsonl/research_reports.jsonl
+data/normalized/research_reports.jsonl
         |
         v
-data/text_corpus/documents.jsonl
-data/text_corpus/document_quality.json
+data/processed/documents/documents.jsonl
+data/processed/documents/document_quality.json
 ```
 
 代码位于：
 
 ```text
-data_pipeline/text/
+data_pipeline/documents/
 ├── cli.py
 ├── cleaner.py
 └── document_builder.py
@@ -113,7 +113,7 @@ data_pipeline/text/
   "published_date": "2026-05-26",
   "tags": ["违纪违规", "个股其他公告"],
   "text": "证券代码：603439……",
-  "source_ref": "data/documents/announcements/259499590.txt"
+  "source_ref": "data/source/announcements/259499590.txt"
 }
 ```
 
@@ -129,7 +129,7 @@ data_pipeline/text/
   "publisher": "东吴证券",
   "tags": ["业绩点评", "买入", "维持"],
   "text": "公司实现营业收入增长……",
-  "source_ref": "data/jsonl/research_reports.jsonl#5971493"
+  "source_ref": "data/normalized/research_reports.jsonl#5971493"
 }
 ```
 
@@ -289,7 +289,7 @@ documents.jsonl.tmp
 质量报告位于：
 
 ```text
-data/text_corpus/document_quality.json
+data/processed/documents/document_quality.json
 ```
 
 当前全量构建结果如下：
@@ -334,17 +334,17 @@ data/text_corpus/document_quality.json
 在项目根目录执行：
 
 ```powershell
-F:\conda_envs\FinTrace\python.exe -m data_pipeline.text.cli build-documents `
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.cli build-documents `
   --data-dir data
 ```
 
 也可以指定输出和报告路径：
 
 ```powershell
-F:\conda_envs\FinTrace\python.exe -m data_pipeline.text.cli build-documents `
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.cli build-documents `
   --data-dir data `
-  --output data\text_corpus\documents.jsonl `
-  --report data\text_corpus\document_quality.json
+  --output data\processed\documents\documents.jsonl `
+  --report data\processed\documents\document_quality.json
 ```
 
 运行测试：
@@ -364,7 +364,7 @@ F:\conda_envs\FinTrace\python.exe -m pytest -q
 `documents.jsonl` 使用无 BOM UTF-8。旧版 Windows PowerShell 可能按系统 ANSI 编码显示，从而出现“文件看起来乱码、实际字节正确”的情况。预览时需要显式指定编码：
 
 ```powershell
-Get-Content -Encoding utf8 data\text_corpus\documents.jsonl -TotalCount 1
+Get-Content -Encoding utf8 data\processed\documents\documents.jsonl -TotalCount 1
 ```
 
 Python 应明确使用：

@@ -8,7 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterator
 
-from data_pipeline.text.cleaner import clean_tags, clean_text, remove_leading_title_lines
+from data_pipeline.documents.cleaner import clean_tags, clean_text, remove_leading_title_lines
 
 
 A_SHARE_SUFFIXES = {"XSHG": ".SH", "XSHE": ".SZ", "XBEI": ".BJ"}
@@ -26,10 +26,10 @@ def build_documents(
     report_path: Path | None = None,
 ) -> dict[str, Any]:
     data_dir = data_dir.resolve()
-    output_path = (output_path or data_dir / "text_corpus" / "documents.jsonl").resolve()
-    report_path = (report_path or data_dir / "text_corpus" / "document_quality.json").resolve()
-    announcement_path = data_dir / "jsonl" / "announcements.jsonl"
-    research_path = data_dir / "jsonl" / "research_reports.jsonl"
+    output_path = (output_path or data_dir / "processed" / "documents" / "documents.jsonl").resolve()
+    report_path = (report_path or data_dir / "processed" / "documents" / "document_quality.json").resolve()
+    announcement_path = data_dir / "normalized" / "announcements.jsonl"
+    research_path = data_dir / "normalized" / "research_reports.jsonl"
     require_file(announcement_path)
     require_file(research_path)
 

@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def count_timeout_records(data_dir: Path) -> int:
-    announcements = data_dir / "jsonl" / "announcements.jsonl"
+    announcements = data_dir / "normalized" / "announcements.jsonl"
     if not announcements.is_file():
         raise FileNotFoundError(f"Announcement JSONL does not exist: {announcements}")
     count = 0

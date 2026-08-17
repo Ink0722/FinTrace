@@ -86,7 +86,7 @@ def test_timeout_failure_filter_excludes_parse_failures_and_successes():
 
 def test_timeout_only_repair_does_not_select_non_timeout_failures():
     data_dir = Path("tests/.timeout_retry_data")
-    announcements = data_dir / "jsonl/announcements.jsonl"
+    announcements = data_dir / "normalized/announcements.jsonl"
     record = {
         "id": "scan-only",
         "download_status": "content_unavailable",
@@ -101,7 +101,12 @@ def test_timeout_only_repair_does_not_select_non_timeout_failures():
         )
         assert report["selected"] == 0
         assert report["remaining_timeouts"] == 0
-        assert (data_dir / "announcement_timeout_remaining.csv").is_file()
+        assert (
+            data_dir
+            / "processed"
+            / "competition"
+            / "announcement_timeout_remaining.csv"
+        ).is_file()
     finally:
         shutil.rmtree(data_dir, ignore_errors=True)
 

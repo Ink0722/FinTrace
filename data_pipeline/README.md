@@ -1,95 +1,151 @@
 # FinTrace Data Pipeline
 
-`data_pipeline/` contains offline dataset preparation code. It does not run inside the Agent request path.
+`data_pipeline/` is the single home for all offline data preparation code. It
+does not answer Agent requests directly. Source data and generated artifacts are
+stored under `data/`; online tool implementations remain under `tools/`.
 
 ## Layout
 
 ```text
 data_pipeline/
-  competition/  Raw competition file conversion and announcement recovery
-  text/         Normalized announcement and research-report documents
+  common/       Shared JSONL, hashing, manifest and retry helpers
+  competition/  Competition file conversion and announcement recovery
+  documents/    Document normalization, Chunk construction and vector indexing
+  events/       Event normalization, clustering and timeline construction
+  ownership/    Shareholder normalization and ownership graph construction
+  financial/    Statement normalization and financial feature construction
 ```
 
-`competition/` is the relocated home of the original preprocessing scripts. `text/` implements normalized Document construction and paragraph-aware Chunk construction. Embedding and vector-index construction remain separate downstream steps.
+The last four packages are separated by data product, while common mechanics
+belong in `common/`. A function used during an Agent request belongs in
+`tools/`, even when its offline index was produced here.
 
-## Build Normalized Documents
+## Data Flow
+
+```text
+Competition files
+  -> data_pipeline.competition
+  -> data/normalized + data/source + data/evaluation
+  -> data_pipeline.documents/events/ownership/financial
+  -> data/processed
+  -> data/indexes
+  -> tools
+```
+
+See [data/README.md](../data/README.md) for the data directory contract.
+
+## Documents
 
 Inputs:
 
 ```text
-data/jsonl/announcements.jsonl
-data/documents/announcements/*.txt
-data/jsonl/research_reports.jsonl
+data/normalized/announcements.jsonl
+data/source/announcements/*.txt
+data/normalized/research_reports.jsonl
 ```
 
-Command:
+Build normalized Documents:
 
 ```powershell
-F:\conda_envs\FinTrace\python.exe -m data_pipeline.text.cli build-documents `
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.cli build-documents `
   --data-dir data
 ```
 
-V1 outputs retained for comparison:
+Outputs:
 
 ```text
-data/text_corpus/documents.jsonl
-data/text_corpus/document_quality.json
+data/processed/documents/documents.jsonl
+data/processed/documents/document_quality.json
 ```
 
-Announcement fields:
-
-```text
-document_id, document_type, company_id, title, published_date,
-tags, text, source_ref
-```
-
-Research-report Documents additionally include `publisher`. Announcements use the downloaded TXT body as `text`; research reports use the JSONL `abstract`. Non-A-share research records and announcements without an indexed text layer are reported and excluded.
-
-For announcements, the builder removes complete title lines repeated at the very start of the body. It does not perform fuzzy deletion elsewhere. The quality report records both the number of affected announcements and the number of removed title lines. Research-report `text` remains an abstract, not the full report.
-
-The builder streams both source files, rejects duplicate Document IDs, and writes through a temporary file before replacing the output. It does not modify any source JSONL or TXT file.
-
-The JSONL output is UTF-8 without a BOM. In Windows PowerShell, specify the encoding when previewing it:
+Build the frozen V2 Chunk corpus:
 
 ```powershell
-Get-Content -Encoding utf8 data\text_corpus\documents.jsonl -TotalCount 1
-```
-
-## Build Chunks
-
-The Chunk builder consumes only the frozen normalized Document corpus. The historical V1 files remain under their original names for comparison:
-
-Default boundaries are `min=200`, `target=600`, `soft_max=900`, and `hard_max=1200` characters. Paragraphs are kept intact when possible. Only a paragraph longer than the hard maximum is split, first at sentence punctuation, then secondary punctuation, and finally at a forced character boundary. Chunk overlap is zero.
-
-```text
-data/text_corpus/chunks.jsonl
-data/text_corpus/chunk_quality.json
-data/text_corpus/chunk_manifest.json
-```
-
-Do not overwrite those files while comparing versions. Generate the improved V2 corpus independently:
-
-```powershell
-F:\conda_envs\FinTrace\python.exe -m data_pipeline.text.cli build-chunks `
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.cli build-chunks `
   --data-dir data `
   --version chunks-v2 `
-  --output data\text_corpus\chunks_v2.jsonl `
-  --report data\text_corpus\chunk_quality_v2.json `
-  --manifest data\text_corpus\chunk_manifest_v2.json
+  --output data\processed\documents\chunks_v2.jsonl `
+  --report data\processed\documents\chunk_quality_v2.json `
+  --manifest data\processed\documents\chunk_manifest_v2.json
 ```
 
-Each Chunk contains only:
+The authoritative corpus is `chunks_v2.jsonl`. `chunks.jsonl` is retained only
+as the historical V1 comparison corpus. Embedding and indexes must record the V2
+manifest hash and may not silently rebuild or replace its Chunk IDs.
+
+`documents/parsers.py`, `uploaded_file_chunker.py` and `build_file_index.py`
+support future PDF, DOCX, TXT or Markdown uploads. They are not used to rebuild
+the competition corpus.
+
+## Generated Indexes
+
+Runtime artifacts are written outside this code package:
 
 ```text
-chunk_version, chunk_id, document_id, chunk_index, section_title, char_start, text
+data/indexes/document_search/
+  fintrace_kb.sqlite
+  embeddings.npy
+  vector.faiss
+  vector_ids.json
+  build_progress.json
+  batch_jobs.json
+  embedding_failures.jsonl
+  manifest.json
 ```
 
-Document-level metadata is joined from `documents.jsonl` through `document_id`; it is not duplicated into every Chunk. `chunk_version` prevents records from different corpora being confused when exported independently. `section_title` is inherited from explicit headings and is `null` when the source has no reliable heading. `char_start` points to the exact start position in the source Document text.
+Estimate the full embedding input without calling Qwen:
 
-The quality report records length distributions, short Chunks, heading coverage, forced boundaries, duplicate IDs, hard-limit violations, and text-coverage failures. The manifest freezes source/output SHA-256 hashes, parameters, schema, version, and counts. Because changing the source or split parameters can change every downstream ID, freeze the manifest before embedding or manually annotating `required_chunk_ids`.
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index --estimate-only
+```
 
-Implementation details and the current full-corpus quality results are documented in [Chunk 构建技术白皮书](../docs/11-Chunk构建技术白皮书.md).
+Prepare Batch File requests locally without calling the API:
 
-## Retrieval Boundary
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index prepare
+```
 
-Chunks intentionally do not duplicate `document_type`; retrieval joins it from the Document metadata table by `document_id`. Retrieval should filter to one type when the question explicitly asks for announcements or research views. Mixed queries should retrieve each type independently before reranking; the initial budget is announcement Top 5 plus research-report Top 5, reranked to a final Top 6. This policy belongs to the retrieval stage and is not implemented by either builder.
+Submit, monitor, collect and finalize the formal index:
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index submit
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index status
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index collect
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index finalize
+```
+
+Submit one prepared shard when a staged rollout is preferred:
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index submit --shard-id shard-0000
+```
+
+Repeat `--shard-id` to select several shards. With no selector, `submit` handles
+all shards that do not already have a Batch job ID.
+
+The builder validates the frozen input hashes, imports searchable metadata into
+SQLite, groups at most ten texts in each `/v1/embeddings` request and splits the
+corpus into resumable DashScope Batch File jobs. Results are restored by
+`custom_id` and response `data.index`; missing, duplicate, malformed or failed
+vectors block finalization. Valid vectors are normalized before an exact
+`IndexFlatIP` index is created. Use the `retry` action for request-level failures
+and `run` only when waiting in one process is convenient. `--force` is accepted
+by `prepare` only and replaces an incompatible local checkpoint or completed
+index after explicit confirmation.
+
+`finalize --allow-partial` is an explicit exception for small, reviewed
+request-level failures. It excludes only missing rows fully explained by Batch
+error records, keeps every Chunk in SQLite for BM25, writes successful vectors
+to a compact FAISS index and records exclusions in `embedding_failures.jsonl`.
+Unknown missing rows and malformed vectors still fail the build.
+
+`build_file_index.py` remains a parsing and SQLite compatibility path for future
+uploaded files. It does not generate vectors; offline vector construction has a
+single Batch File implementation.
+
+## Reproducibility
+
+Every generated corpus or index must record its input paths, SHA-256 hashes,
+schema version, parameters, record counts and creation time. Builders write to a
+temporary file before replacing a completed artifact. Failed API batches must be
+recorded and must never be replaced with fake or hash-based production vectors.

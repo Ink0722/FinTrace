@@ -6,8 +6,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from knowledge_base.document_ingestion.chunker import chunk_pages, stable_doc_id
-from knowledge_base.document_ingestion.kb_store import (
+from data_pipeline.documents.uploaded_file_chunker import chunk_pages, stable_doc_id
+from data_pipeline.documents.sqlite_store import (
     clear_store,
     connect,
     delete_document_chunks,
@@ -15,9 +15,7 @@ from knowledge_base.document_ingestion.kb_store import (
     insert_chunks,
     insert_document,
 )
-from knowledge_base.document_ingestion.parsers import parse_document
-from knowledge_base.document_ingestion.vector_index import build_vector_index
-from knowledge_base.embeddings.client import build_embedding_client
+from data_pipeline.documents.parsers import parse_document
 
 
 SUPPORTED_SUFFIXES = {".txt", ".md", ".docx", ".pdf"}
@@ -26,12 +24,15 @@ SUPPORTED_SUFFIXES = {".txt", ".md", ".docx", ".pdf"}
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build FinTrace local document knowledge base")
     parser.add_argument("--raw-dir", default="data/raw_documents", help="Directory containing source documents")
-    parser.add_argument("--kb-dir", default="data/knowledge_base", help="Directory to write SQLite/FAISS files")
+    parser.add_argument(
+        "--kb-dir",
+        default="data/indexes/document_search",
+        help="Directory to write SQLite/FAISS files",
+    )
     parser.add_argument("--max-chars", type=int, default=900, help="Maximum characters per chunk")
     parser.add_argument("--overlap-chars", type=int, default=120, help="Overlap characters for long chunks")
     parser.add_argument("--append", action="store_true", help="Append to existing SQLite store instead of rebuilding")
     parser.add_argument("--skip-unchanged", action="store_true", help="Skip source files with unchanged SHA-256 hash")
-    parser.add_argument("--build-vector", action="store_true", help="Build FAISS vector index after SQLite ingestion")
     return parser
 
 
@@ -118,15 +119,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 }
             )
 
-    embedding_info = None
-    if args.build_vector:
-        try:
-            embedding_info = build_vector_index(db_path, kb_dir, build_embedding_client())
-        except Exception as exc:
-            embedding_info = {"enabled": False, "error": f"{type(exc).__name__}: {exc}"}
-            failures.append({"file": "__vector_index__", "error": embedding_info["error"]})
-
-    write_manifest(kb_dir, db_path, raw_dir, doc_count, chunk_count, failures, embedding_info)
+    write_manifest(kb_dir, db_path, raw_dir, doc_count, chunk_count, failures)
     write_parse_report(kb_dir, raw_dir, document_reports, failures, skipped_count)
     conn.close()
     print(f"Built knowledge base: documents={doc_count}, chunks={chunk_count}, failures={len(failures)}")
@@ -177,21 +170,19 @@ def write_manifest(
     doc_count: int,
     chunk_count: int,
     failures: list[dict],
-    embedding_info: dict | None,
 ) -> None:
     kb_dir.mkdir(parents=True, exist_ok=True)
     manifest = {
         "created_at": datetime.now(UTC).isoformat(),
         "raw_dir": str(raw_dir),
         "sqlite_path": str(db_path),
-        "vector_index_path": str(kb_dir / "vector.faiss"),
-        "vector_ids_path": str(kb_dir / "vector_ids.json"),
         "document_count": doc_count,
         "chunk_count": chunk_count,
         "failures": failures,
-        "embedding": embedding_info,
     }
-    (kb_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    (kb_dir / "file_ingestion_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def build_parse_warnings(pages: list[dict], chunks: list[dict]) -> list[str]:

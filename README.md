@@ -78,7 +78,8 @@ app/             CLI 和 FastAPI 入口
 harness/         Agent 编排、路由、校验、回答、trace
 tools/           四个可独立测试的金融工具
 schemas/         Pydantic 数据契约
-knowledge_base/  离线文档知识库构建
+data_pipeline/   文档、事件、股权和财务离线预处理
+data/            源数据、标准数据、处理结果和运行索引
 prompts/         system / planner prompt
 tests/           单元测试和工作流测试
 ```
@@ -282,8 +283,8 @@ harness/
 tools/
 schemas/
 prompts/
-knowledge_base/
 data_pipeline/
+data/
 evaluation/
 tests/
 deployment/
@@ -305,7 +306,7 @@ Planner 采用“按需调用、综合分析主动检查”的策略：普通指
 |---|---|---|
 | `financial_risk_analysis` | 已支持 CSV 结构化财务数据、指标计算、风险规则和证据绑定 | `data/financial/financial_records.csv` / `tools/financial_risk/sample_data.py` |
 | `ownership_penetration` | 已支持 CSV 数据源、有界图搜索、穿透比例和关系证据 | `data/ownership/*.csv` / `tools/ownership_graph/sample_data.py` |
-| `document_search` | 已支持 SQLite 知识库优先检索；无知识库时回退样例 BM25 | `data/knowledge_base/fintrace_kb.sqlite` / `tools/document_search/sample_data.py` |
+| `document_search` | 已支持 SQLite 知识库优先检索；无知识库时回退样例 BM25 | `data/indexes/document_search/fintrace_kb.sqlite` / `tools/document_search/sample_data.py` |
 | `event_timeline` | 已支持 CSV 事件数据、时间过滤、事件聚类和证据绑定 | `data/events/events.csv` / `tools/event_timeline/sample_data.py` |
 
 ## Operation 功能说明
@@ -333,21 +334,21 @@ Planner 通过 `operation` 指定工具本次需要完成的具体任务。每�
 ```text
 announcements.jsonl + 公告 TXT
 research_reports.jsonl + abstract
-→ data_pipeline.text
-→ data/text_corpus/documents.jsonl
+→ data_pipeline.documents
+→ data/processed/documents/documents.jsonl
 ```
 
 执行：
 
 ```powershell
-F:\conda_envs\FinTrace\python.exe -m data_pipeline.text.cli build-documents `
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.cli build-documents `
   --data-dir data
 ```
 
 同时生成质量报告：
 
 ```text
-data/text_corpus/document_quality.json
+data/processed/documents/document_quality.json
 ```
 
 公告Document字段：
@@ -362,7 +363,7 @@ tags, text, source_ref
 JSONL采用无BOM的UTF-8编码。在Windows PowerShell中预览时应显式指定编码：
 
 ```powershell
-Get-Content -Encoding utf8 data\text_corpus\documents.jsonl -TotalCount 1
+Get-Content -Encoding utf8 data\processed\documents\documents.jsonl -TotalCount 1
 ```
 
 本命令只构建统一Document，不生成Chunk、不调用Embedding、不构建FAISS。完整模块说明见[data_pipeline/README.md](data_pipeline/README.md)。
@@ -372,12 +373,58 @@ Get-Content -Encoding utf8 data\text_corpus\documents.jsonl -TotalCount 1
 `document_search` 采用离线建库、在线检索：
 
 ```text
-PDF / DOCX / TXT / MD
-→ knowledge_base.document_ingestion
-→ SQLite chunks
-→ document_search BM25 检索
+documents.jsonl + chunks_v2.jsonl
+→ data_pipeline.documents（导入、Embedding、索引构建）
+→ data/indexes/document_search
+→ tools.document_search
 → Evidence
 ```
+
+竞赛文本只使用冻结的 `data/processed/documents/chunks_v2.jsonl`，不会在建索引时重新切分。下面的原始文件入口仅用于未来接收额外 PDF、DOCX、TXT 或 Markdown 文件。
+
+先进行不调用 API 的字符和 Token 估算：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index --estimate-only
+```
+
+确认成本后，先在本地生成 Batch 请求文件（不调用 API）：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index prepare
+```
+
+正式任务分阶段执行：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index submit
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index status
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index collect
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index finalize
+```
+
+也可以逐个提交已经准备好的分片：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index submit --shard-id shard-0000
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index submit --shard-id shard-0001
+```
+
+`--shard-id` 可以重复传入以一次选择多个分片；不传时提交全部尚未提交的分片。分片名称以 `prepare` 生成的 `state.json` 为准，本次语料为 `shard-0000` 至 `shard-0008`。已保存 `batch_id` 的分片会自动跳过，不会重复提交。
+
+`submit` 使用阿里云百炼 OpenAI 兼容 Batch File API，每个请求包含最多 10 个 Chunk；默认每 20,000 个 Chunk 拆成一个可独立重试的任务。`status` 可重复查询，`collect` 只下载已完成结果，`finalize` 按 `custom_id + data.index` 恢复向量顺序并严格校验缺失、重复、维度和非有限值。存在请求级错误时，执行 `retry` 生成失败请求分片后，重新运行 `submit/status/collect/finalize`。`run` 可串联正常流程，但任务可能需要等待，分阶段命令更便于观察。
+
+若经过人工确认接受少量、具有明确错误记录的缺失，可显式构建部分索引：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index finalize --allow-partial
+```
+
+该参数不会忽略未知缺失、重复向量、错误维度或非法浮点数；仅排除错误文件中能够完整映射到 Chunk 的失败请求。SQLite 仍保留全部 Chunk，失败项继续支持 BM25，FAISS 与 `vector_ids.json` 只包含成功向量。覆盖率和排除数量写入 `manifest.json`，具体失败项写入 `embedding_failures.jsonl`。默认 `finalize` 仍要求 100% 完整。
+
+本地断点位于 `data/indexes/document_search/.batch_build/state.json`。输入哈希、模型或维度变化时拒绝混用旧任务；替换不兼容检查点或已有索引必须在 `prepare` 时显式增加 `--force`。在线检索的问题向量仍通过兼容接口同步生成，因为查询必须实时返回。
+
+### 上传文件兼容入口
 
 原始文件建议放在：
 
@@ -399,50 +446,48 @@ data/raw_documents/
 建库命令：
 
 ```powershell
-F:\conda_envs\FinTrace\python.exe -m knowledge_base.document_ingestion.build_kb `
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_file_index `
   --raw-dir data/raw_documents `
-  --kb-dir data/knowledge_base
-```
-
-如果要同时建立 FAISS 向量索引，追加 `--build-vector`：
-
-```powershell
-F:\conda_envs\FinTrace\python.exe -m knowledge_base.document_ingestion.build_kb `
-  --raw-dir data/raw_documents `
-  --kb-dir data/knowledge_base `
-  --build-vector
+  --kb-dir data/indexes/document_search
 ```
 
 数据量较大、只是追加或重跑未变化文件时，可以使用：
 
 ```powershell
-F:\conda_envs\FinTrace\python.exe -m knowledge_base.document_ingestion.build_kb `
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_file_index `
   --raw-dir data/raw_documents `
-  --kb-dir data/knowledge_base `
+  --kb-dir data/indexes/document_search `
   --skip-unchanged
 ```
 
-`--skip-unchanged` 会根据 `source_file + file_hash` 跳过未变化文件；如果同时需要向量索引，当前建议重建整份 FAISS 索引。
+`--skip-unchanged` 会根据 `source_file + file_hash` 跳过未变化文件。该兼容入口只负责解析、切分和 SQLite 写入，不再提供同步向量构建；正式向量索引统一由上述 Batch 工作流生成。
 
 生成文件：
 
 ```text
-data/knowledge_base/
+data/indexes/document_search/
   fintrace_kb.sqlite   # 文档、chunk 正文、页码、来源路径
   vector.faiss         # FAISS 向量索引
   vector_ids.json      # FAISS 行号到 chunk_id 的映射
-  embeddings.npy       # 可选调试用 embedding 矩阵
-  manifest.json        # 建库时间、chunk 数、失败文件
+  embeddings.npy       # 归一化后的原始向量矩阵
+  build_progress.json  # 完成行数和 API 实际 Token
+  batch_jobs.json      # Batch 任务 ID、文件 ID、状态和请求计数
+  embedding_failures.jsonl # 被显式排除的 Chunk 和 API 错误，完整索引时为空
+  manifest.json        # 输入哈希、模型、维度和构建结果
 ```
 
 Qwen/DashScope embedding 配置：
 
 ```text
-EMBEDDING_PROVIDER=dashscope
 DASHSCOPE_EMBEDDING_API_KEY=your_api_key
 DASHSCOPE_EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 DASHSCOPE_EMBEDDING_MODEL=text-embedding-v4
-EMBEDDING_BATCH_SIZE=16
+DASHSCOPE_EMBEDDING_DIMENSION=1024
+EMBEDDING_BATCH_CHUNKS_PER_SHARD=20000
+EMBEDDING_BATCH_COMPLETION_WINDOW=24h
+EMBEDDING_BATCH_POLL_SECONDS=30
+EMBEDDING_TIMEOUT_SECONDS=120
+EMBEDDING_MAX_RETRIES=5
 ```
 
 SQLite 保存 chunk 正文、页码和来源元数据；FAISS 只保存向量索引。在线检索时，FAISS 先返回向量行号，系统再通过 `vector_ids.json` 找到 `chunk_id`，最后回 SQLite 读取原文证据。
@@ -474,7 +519,7 @@ mode=hybrid  # 默认，BM25 + FAISS 合并
 建库时会额外生成：
 
 ```text
-data/knowledge_base/parse_report.json
+data/indexes/document_search/parse_report.json
 ```
 
 其中包含每个文件的解析状态、页数、文本字符数、chunk 数、识别到的 section 数和潜在 OCR 警告。chunker 会尝试识别常见章节标题，例如“问题一：关于存货跌价准备”“关键审计事项”“管理层讨论与分析”，并写入 `section_title`。

@@ -32,7 +32,8 @@ tmp/
 temp/
 
 # Local datasets, generated indexes, and bulky raw files
-data/
+data/*
+!data/README.md
 14-知识图谱与智能推荐赛道-东吴证券-基于 Agentic AI 的金融长上下文推理、图谱穿透与财报反欺诈智能问答算法探索/
 *.zip
 *.7z

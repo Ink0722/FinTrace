@@ -3,9 +3,9 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from data_pipeline.text.chunk_builder import build_chunks
-from data_pipeline.text.chunker import ChunkingConfig
-from data_pipeline.text.document_builder import build_documents
+from data_pipeline.documents.chunk_builder import build_chunks
+from data_pipeline.documents.chunker import ChunkingConfig
+from data_pipeline.documents.document_builder import build_documents
 
 
 def build_parser() -> argparse.ArgumentParser:
