@@ -1,0 +1,243 @@
+import json
+import shutil
+from pathlib import Path
+from uuid import uuid4
+
+import pytest
+
+from data_pipeline.financial.build_index import build_financial_index
+from schemas.enums import ToolName
+from schemas.tool_calls import ToolCall
+from tools.financial_analysis.interface import financial_analysis
+
+
+@pytest.fixture
+def financial_index(monkeypatch):
+    root = Path(".tmp_tests") / f"financial_analysis_{uuid4().hex}"
+    normalized = root / "normalized"
+    index_path = root / "indexes" / "financial_metrics.sqlite"
+    normalized.mkdir(parents=True)
+    _write_jsonl(
+        normalized / "balance_sheets.jsonl",
+        [
+            _row("OBJ-BS-1", "000001.SZ", "2023-12-31", inventories=100, tot_assets=1000),
+            _row("OBJ-BS-2", "000001.SZ", "2024-12-31", inventories=150, tot_assets=1200),
+            _row("OBJ-BS-3", "000002.SZ", "2024-12-31", inventories=200, tot_assets=1500),
+        ],
+    )
+    _write_jsonl(
+        normalized / "income_statements.jsonl",
+        [
+            _row("OBJ-IS-1", "000001.SZ", "2023-12-31", oper_rev=500, net_profit_excl_min_int_inc=50),
+            _row("OBJ-IS-2", "000001.SZ", "2024-12-31", oper_rev=600, net_profit_excl_min_int_inc=60),
+            _row("OBJ-IS-3", "000002.SZ", "2024-12-31", oper_rev=800, net_profit_excl_min_int_inc=70),
+            _row("OBJ-IS-4", "000001.SZ", "2025-03-31", oper_rev=160, net_profit_excl_min_int_inc=15),
+        ],
+    )
+    _write_jsonl(
+        normalized / "cashflows.jsonl",
+        [
+            _row("OBJ-CF-1", "000001.SZ", "2023-12-31", net_cash_flows_oper_act=40),
+            _row("OBJ-CF-2", "000001.SZ", "2024-12-31", net_cash_flows_oper_act=55),
+            _row("OBJ-CF-3", "000002.SZ", "2024-12-31", net_cash_flows_oper_act=65),
+        ],
+    )
+    manifest = build_financial_index(normalized, index_path)
+    monkeypatch.setenv("FINTRACE_FINANCIAL_NORMALIZED_DIR", str(normalized))
+    monkeypatch.setenv("FINTRACE_FINANCIAL_INDEX_PATH", str(index_path))
+    try:
+        yield index_path, manifest
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_build_financial_index_from_normalized_jsonl(financial_index) -> None:
+    index_path, manifest = financial_index
+    assert index_path.is_file()
+    assert manifest["source_rows"]["income_statement"] == 4
+    assert manifest["total_metric_rows"] > 0
+
+
+def test_metric_query_returns_values_and_evidence(financial_index) -> None:
+    result = financial_analysis(
+        _call(
+            {
+                "operation": "metric_query",
+                "company_ids": ["000001.SZ"],
+                "metric_codes": ["REVENUE", "NET_PROFIT_PARENT"],
+                "report_periods": ["2024-12-31"],
+                "knowledge_cutoff": "2025-04-30",
+            }
+        )
+    )
+    assert result.status.value == "success"
+    assert {item["metric_code"] for item in result.data["values"]} == {
+        "REVENUE",
+        "NET_PROFIT_PARENT",
+    }
+    assert result.evidence
+    assert result.evidence[0].source.row_id
+
+
+def test_metric_query_respects_knowledge_cutoff(financial_index) -> None:
+    result = financial_analysis(
+        _call(
+            {
+                "operation": "metric_query",
+                "company_ids": ["000001.SZ"],
+                "metric_codes": ["REVENUE"],
+                "report_periods": ["2024-12-31"],
+                "knowledge_cutoff": "2024-01-01",
+            }
+        )
+    )
+    assert result.status.value == "failed"
+    assert result.error.error_type.value == "DATA_NOT_AVAILABLE"
+
+
+def test_metric_compare_across_periods(financial_index) -> None:
+    result = financial_analysis(
+        _call(
+            {
+                "operation": "metric_compare",
+                "company_ids": ["000001.SZ"],
+                "metric_codes": ["REVENUE"],
+                "report_periods": ["2023-12-31", "2024-12-31"],
+                "comparison_method": "both",
+            }
+        )
+    )
+    comparison = result.data["comparisons"][0]
+    assert result.status.value == "success"
+    assert result.data["comparison_dimension"] == "period"
+    assert comparison["adjacent_changes"][0]["change_amount"] == 100
+    assert comparison["adjacent_changes"][0]["change_rate"] == pytest.approx(0.2)
+
+
+def test_metric_compare_across_companies(financial_index) -> None:
+    result = financial_analysis(
+        _call(
+            {
+                "operation": "metric_compare",
+                "company_ids": ["000001.SZ", "000002.SZ"],
+                "metric_codes": ["INVENTORY"],
+                "report_periods": ["2024-12-31"],
+            }
+        )
+    )
+    comparison = result.data["comparisons"][0]
+    assert result.status.value == "success"
+    assert comparison["ranking"] == ["000002.SZ", "000001.SZ"]
+    assert comparison["max_min_spread"]["change_amount"] == 50
+
+
+def test_metric_compare_rejects_ambiguous_dimensions(financial_index) -> None:
+    result = financial_analysis(
+        _call(
+            {
+                "operation": "metric_compare",
+                "company_ids": ["000001.SZ", "000002.SZ"],
+                "metric_codes": ["TOTAL_ASSETS"],
+                "report_periods": ["2023-12-31", "2024-12-31"],
+            }
+        )
+    )
+    assert result.status.value == "failed"
+    assert result.error.error_type.value == "INVALID_ARGUMENT"
+
+
+def test_metric_compare_rejects_mixed_ytd_period_types(financial_index) -> None:
+    result = financial_analysis(
+        _call(
+            {
+                "operation": "metric_compare",
+                "company_ids": ["000001.SZ"],
+                "metric_codes": ["REVENUE"],
+                "report_periods": ["2024-12-31", "2025-03-31"],
+            }
+        )
+    )
+    assert result.status.value == "failed"
+    assert "matching period types" in result.error.message
+
+
+def test_risk_scan_is_explicitly_unsupported(financial_index) -> None:
+    result = financial_analysis(
+        _call(
+            {
+                "operation": "risk_scan",
+                "company_ids": ["000001.SZ"],
+                "report_periods": ["2024-12-31"],
+            }
+        )
+    )
+    assert result.status.value == "failed"
+    assert result.error.error_type.value == "UNSUPPORTED_QUERY"
+
+
+def test_missing_financial_index_returns_build_instruction(monkeypatch) -> None:
+    missing = Path(".tmp_tests") / "missing-financial-index.sqlite"
+    monkeypatch.setenv("FINTRACE_FINANCIAL_INDEX_PATH", str(missing))
+    result = financial_analysis(
+        _call(
+            {
+                "operation": "metric_query",
+                "company_ids": ["000001.SZ"],
+                "metric_codes": ["REVENUE"],
+                "report_periods": ["2024-12-31"],
+            }
+        )
+    )
+    assert result.status.value == "failed"
+    assert "data_pipeline.financial.build_index" in result.error.details["build_command"]
+
+
+def test_stale_financial_index_requires_rebuild(financial_index) -> None:
+    index_path, _ = financial_index
+    manifest_path = index_path.with_name("manifest.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["mapping_version"] = "old-version"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    result = financial_analysis(
+        _call(
+            {
+                "operation": "metric_query",
+                "company_ids": ["000001.SZ"],
+                "metric_codes": ["REVENUE"],
+                "report_periods": ["2024-12-31"],
+            }
+        )
+    )
+    assert result.status.value == "failed"
+    assert "stale or incomplete" in result.error.message
+
+
+def _call(arguments: dict) -> ToolCall:
+    return ToolCall(
+        tool_call_id="CALL-001",
+        tool_name=ToolName.FINANCIAL_ANALYSIS,
+        arguments=arguments,
+        reason="test",
+    )
+
+
+def _row(object_id: str, company_id: str, report_period: str, **metrics) -> dict:
+    return {
+        "object_id": object_id,
+        "s_info_windcode": company_id,
+        "wind_code": company_id,
+        "ann_dt": "2025-03-31",
+        "actual_ann_dt": "2025-03-31",
+        "report_period": report_period,
+        "statement_type": "408006000",
+        "crncy_code": "CNY",
+        "comp_type_code": "1",
+        **metrics,
+    }
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+        encoding="utf-8",
+    )

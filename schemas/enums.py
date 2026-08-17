@@ -5,7 +5,7 @@ class ToolName(StrEnum):
     DOCUMENT_SEARCH = "document_search"
     OWNERSHIP_PENETRATION = "ownership_penetration"
     EVENT_TIMELINE = "event_timeline"
-    FINANCIAL_RISK_ANALYSIS = "financial_risk_analysis"
+    FINANCIAL_ANALYSIS = "financial_analysis"
 
 
 class ToolStatus(StrEnum):

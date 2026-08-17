@@ -110,10 +110,6 @@ def check_evidence_node(state: AgentState) -> AgentState:
                 for hop in path.get("hops", []):
                     if not hop.get("evidence_id"):
                         warnings.append("ownership_penetration 存在缺少 evidence_id 的路径跳。")
-        if result.tool_name.value == "financial_risk_analysis":
-            for signal in result.data.get("risk_signals", []):
-                if signal.get("triggered") and not signal.get("evidence_ids"):
-                    warnings.append(f"financial_risk_analysis 规则 {signal.get('rule_id')} 触发但缺少 evidence_ids。")
     for warning in warnings:
         if warning not in state.warnings:
             state.warnings.append(warning)

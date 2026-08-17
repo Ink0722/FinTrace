@@ -50,7 +50,7 @@ app.cli.main()
       → harness.guards.validation.validate_plan()
    → execute_tools_node()
       → tools.registry.execute_tool()
-      → document_search / financial_risk_analysis / ownership_penetration / event_timeline
+      → document_search / financial_analysis / ownership_penetration / event_timeline
       → harness.evidence.ledger.merge_evidence()
    → validate_tool_results_node()
       → harness.guards.validation.validate_tool_result()
@@ -298,13 +298,13 @@ deployment/
 - 工具必须能脱离 Agent 独立测试；
 - MVP 优先稳定、可解释、可评测。
 
-Planner 采用“按需调用、综合分析主动检查”的策略：普通指标、公告或股东事实查询只调用必要工具；当用户提出企业综合分析、尽调、风险画像或投资风险研判时，即使没有逐项点名，也会主动考虑 `financial_risk_analysis` 和 `ownership_penetration`。前者负责三张财务报表的跨科目勾稽与风险信号识别，后者负责现有证据支持的资本关联和多层持股路径。现有比赛文件不含历史或实时行情，相关问题返回数据不支持，不由 LLM 凭记忆补充。
+Planner 采用“按需调用、综合分析主动检查”的策略：普通指标、公告或股东事实查询只调用必要工具。当前 `financial_analysis` 负责三张 normalized 财务报表的精确指标查询和确定性比较，`ownership_penetration` 负责现有证据支持的资本关联和多层持股路径。财务 `risk_scan` 尚未实现，Agent 不得把指标比较描述成完整风险扫描。现有比赛文件不含历史或实时行情，相关问题返回数据不支持，不由 LLM 凭记忆补充。
 
 ## 当前工具进度
 
 | 工具 | 当前状态 | 数据来源 |
 |---|---|---|
-| `financial_risk_analysis` | 已支持 CSV 结构化财务数据、指标计算、风险规则和证据绑定 | `data/financial/financial_records.csv` / `tools/financial_risk/sample_data.py` |
+| `financial_analysis` | 已支持 normalized 三表索引、`metric_query`、`metric_compare` 和行级证据；`risk_scan` 暂未实现 | `data/normalized/*.jsonl` / `data/indexes/financial_analysis/financial_metrics.sqlite` |
 | `ownership_penetration` | 已支持 CSV 数据源、有界图搜索、穿透比例和关系证据 | `data/ownership/*.csv` / `tools/ownership_graph/sample_data.py` |
 | `document_search` | 已支持 SQLite 知识库优先检索；无知识库时回退样例 BM25 | `data/indexes/document_search/fintrace_kb.sqlite` / `tools/document_search/sample_data.py` |
 | `event_timeline` | 已支持 CSV 事件数据、时间过滤、事件聚类和证据绑定 | `data/events/events.csv` / `tools/event_timeline/sample_data.py` |
@@ -318,14 +318,14 @@ Planner 通过 `operation` 指定工具本次需要完成的具体任务。每�
 | `document_search` | `search` | 在公告正文和研报摘要中执行关键词或语义检索，并按公司、文档类型、日期和发布机构过滤结果；返回可追溯的 Chunk 及其来源信息。 | “贵州茅台的研报如何评价其盈利能力？”“公告中如何描述本次违规事项？” |
 | `financial_analysis` | `metric_query` | 查询一个或多个公司在指定报告期的原始财务指标或确定性派生指标，保留数值、单位、报表口径和来源。 | “查询公司 2024 年营业收入和净利润。” |
 | `financial_analysis` | `metric_compare` | 对同口径指标进行确定性计算：单公司加多个期间时返回有序序列、相邻期间变化和首尾累计变化，多公司加单一期间时返回各公司数值及差异；工具不生成趋势性语言结论。 | “分析公司近五年的经营现金流趋势。”“比较甲公司和乙公司 2024 年的资产负债率。” |
-| `financial_analysis` | `risk_scan` | 执行现金流与利润背离、存货异常、应收异常等确定性财务规则，返回风险信号、计算过程和证据；风险信号不等同于财务造假结论。 | “扫描公司近三年的财务异常风险。” |
+| `financial_analysis` | `risk_scan` | 暂未实现；当前调用返回 `UNSUPPORTED_QUERY`，不会运行旧规则或生成风险评分。 | “扫描公司近三年的财务异常风险。” |
 | `ownership_analysis` | `holding_query` | 查询主要股东快照：提供 `company_ids` 时从公司查股东并返回集中度，提供 `holder_ids` 时从股东反查公司，同时提供则做交叉过滤。 | “公司 2024 年末的前十大股东有哪些？”“某基金出现在哪些公司的主要股东名单中？” |
 | `ownership_analysis` | `holding_compare` | 比较同一公司两个快照日期的主要股东名单，确定性识别进入、退出、增持和减持及其变化幅度。 | “哪些主要股东在两个快照日期之间进行了减持？” |
 | `ownership_analysis` | `penetration` | 在快照能够证明的持股关系中搜索指定主体到目标公司的有限多层路径，返回每一跳持股比例、路径比例乘积和完整性警告。 | “主体 A 通过哪些层级间接持有公司 B？” |
 | `event_timeline` | `event_query` | 按主体、事件类型、关键词和日期范围筛选事件，完成去重和排序，并可包含财务或股东派生信号；返回可供 Agent 组织时间线的事件节点及证据。 | “查询公司 2022 年以来受到处罚的事件。”“整理公司近三年的违规和财务风险时间线。” |
 | `event_timeline` | `event_cluster` | 根据事件类型、时间接近程度和实体重合度聚合相关事件，输出事件簇及聚合依据；只表达相关性和时序，不自动认定因果关系。 | “把同一轮违规调查及后续处罚聚合为一个事件簇。” |
 
-选择原则：查原文使用 `search`；只查询财务数值使用 `metric_query`；需要计算跨期变化、连续多期序列或跨公司差异时使用 `metric_compare`；只有需要执行预警规则时才使用 `risk_scan`。`metric_compare` 不支持“多个公司与多个期间”同时比较，因为这种输入无法唯一确定比较维度。工具负责数值排序和计算，Agent LLM 负责根据工具结果说明上升、下降、增速变化或拐点，不得自行补充数值。持股事实、反向持股查询和集中度统一使用 `holding_query`，股东变化使用 `holding_compare`，多层路径使用 `penetration`。查找、过滤和排序事件统一使用 `event_query`，Agent 根据返回节点组织时间线；需要将相关节点归并为事件簇时使用 `event_cluster`。
+选择原则：查原文使用 `search`；只查询财务数值使用 `metric_query`；需要计算跨期变化、连续多期序列或跨公司差异时使用 `metric_compare`。当前不得规划 `risk_scan`。`metric_compare` 不支持“多个公司与多个期间”同时比较，因为这种输入无法唯一确定比较维度。工具负责数值排序和计算，Agent LLM 负责根据工具结果说明上升、下降、增速变化或拐点，不得自行补充数值。持股事实、反向持股查询和集中度统一使用 `holding_query`，股东变化使用 `holding_compare`，多层路径使用 `penetration`。查找、过滤和排序事件统一使用 `event_query`，Agent 根据返回节点组织时间线；需要将相关节点归并为事件簇时使用 `event_cluster`。
 
 ## 比赛文本 Document
 
@@ -601,46 +601,20 @@ target 反向 BFS 子图
 
 ## 财务结构化数据
 
-`financial_risk_analysis` 支持结构化财务记录数据源：
+`financial_analysis` 直接以三张 normalized JSONL 为事实来源。在线查询使用由这些文件构建的窄表 SQLite，不读取旧 CSV，也不使用内置样例。
 
-```text
-sample  # 内置样例
-csv     # data/financial/financial_records.csv
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.financial.build_index
 ```
 
 环境变量：
 
-```text
-FINANCIAL_DATA_SOURCE=csv
-FINANCIAL_RECORDS_PATH=data/financial/financial_records.csv
+```dotenv
+FINTRACE_FINANCIAL_NORMALIZED_DIR=data/normalized
+FINTRACE_FINANCIAL_INDEX_PATH=data/indexes/financial_analysis/financial_metrics.sqlite
 ```
 
-`financial_records.csv`：
-
-```csv
-company_id,company_name,report_period,statement_type,metric_code,metric_name,value,unit,currency,source_doc_id,source_path,page,evidence_id
-000001.SZ,示例公司,2022-12-31,balance_sheet,INVENTORY,存货,310,CNY,CNY,ANNUAL-2022,data/raw_documents/annual_report.pdf,86,EVID-FIN-001
-```
-
-常用 `metric_code`：
-
-```text
-REVENUE
-NET_PROFIT
-OPERATING_CASHFLOW
-INVENTORY
-ACCOUNTS_RECEIVABLE
-GROSS_PROFIT
-NON_RECURRING_PROFIT
-```
-
-回退策略：
-
-- CSV 不存在且未强制 `FINANCIAL_DATA_SOURCE=csv`：使用内置样例，并返回 warning；
-- CSV 存在但目标公司没有记录：返回 `DATA_NOT_AVAILABLE`，不回退样例；
-- CSV 解析或校验失败：返回 `VALIDATION_FAILED`。
-
-CSV 中的 `evidence_id`、`source_doc_id`、`source_path`、`page` 会进入财务 Evidence，供最终回答追溯来源。
+当前开放 `metric_query` 和 `metric_compare`。每条结果保留 normalized 来源文件、原始字段、`object_id`、公告日期和映射版本，并生成稳定 Evidence。完整参数、指标目录和期间口径见 `tools/financial_analysis/README.md`。
 
 ## 事件时间线数据
 

@@ -70,12 +70,12 @@ def test_plan_validation_rejects_deprecated_scalar_collection_parameters() -> No
         tool_calls=[
             ToolCall(
                 tool_call_id="CALL-001",
-                tool_name=ToolName.FINANCIAL_RISK_ANALYSIS,
+                tool_name=ToolName.FINANCIAL_ANALYSIS,
                 arguments={"company_id": "000001.SZ", "report_period": "2022-12-31"},
                 reason="test deprecated arguments",
             )
         ],
     )
     errors = validate_plan(plan)
-    assert "deprecated scalar parameter: financial_risk_analysis.company_id" in errors
-    assert "deprecated scalar parameter: financial_risk_analysis.report_period" in errors
+    assert "deprecated scalar parameter: financial_analysis.company_id" in errors
+    assert "deprecated scalar parameter: financial_analysis.report_period" in errors

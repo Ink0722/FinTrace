@@ -117,13 +117,12 @@ def _completed_tool_summary_lines(state: AgentState) -> list[str]:
 
     for result in state.tool_results:
         data = result.data
-        if result.tool_name.value == "financial_risk_analysis":
+        if result.tool_name.value == "financial_analysis":
             lines.append("")
             lines.append(
-                f"financial_risk_analysis：report_periods={data.get('report_periods')}, "
-                f"risk_level={data.get('risk_level')}, "
-                f"risk_score={data.get('risk_score')}, "
-                f"triggered_rule_ids={data.get('triggered_rule_ids', [])}"
+                f"financial_analysis：operation={data.get('operation')}, "
+                f"record_count={data.get('record_count')}, "
+                f"comparison_dimension={data.get('comparison_dimension')}"
             )
         elif result.tool_name.value == "ownership_penetration":
             summary = data.get("summary", {})

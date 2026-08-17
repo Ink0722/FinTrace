@@ -143,6 +143,19 @@ Unknown missing rows and malformed vectors still fail the build.
 uploaded files. It does not generate vectors; offline vector construction has a
 single Batch File implementation.
 
+## Financial metric index
+
+Build the narrow online financial index from the three normalized statement files:
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.financial.build_index
+```
+
+The builder extracts only versioned metrics declared in
+`tools.financial_analysis.metric_catalog` and writes
+`data/indexes/financial_analysis/financial_metrics.sqlite` plus `manifest.json`.
+The normalized JSONL files remain the source of truth.
+
 ## Reproducibility
 
 Every generated corpus or index must record its input paths, SHA-256 hashes,

@@ -3,7 +3,7 @@ from schemas.tool_calls import ToolCall
 from schemas.tool_results import ToolError, ToolResult
 from tools.document_search.interface import document_search
 from tools.event_timeline.interface import event_timeline
-from tools.financial_risk.interface import financial_risk_analysis
+from tools.financial_analysis.interface import financial_analysis
 from tools.ownership_graph.interface import ownership_penetration
 
 
@@ -15,8 +15,8 @@ def execute_tool(call: ToolCall) -> ToolResult:
         return ownership_penetration(call)
     if call.tool_name == ToolName.EVENT_TIMELINE:
         return event_timeline(call)
-    if call.tool_name == ToolName.FINANCIAL_RISK_ANALYSIS:
-        return financial_risk_analysis(call)
+    if call.tool_name == ToolName.FINANCIAL_ANALYSIS:
+        return financial_analysis(call)
 
     return ToolResult(
         tool_call_id=call.tool_call_id,

@@ -219,10 +219,10 @@ def print_tool_trace(state: dict) -> None:
 def summarize_tool_result(result: dict) -> str:
     data = result.get("data") or {}
     tool_name = result.get("tool_name")
-    if tool_name == "financial_risk_analysis":
+    if tool_name == "financial_analysis":
         return (
-            f"report_periods={data.get('report_periods')}, risk_level={data.get('risk_level')}, "
-            f"risk_score={data.get('risk_score')}, triggered_rule_ids={data.get('triggered_rule_ids')}"
+            f"operation={data.get('operation')}, record_count={data.get('record_count')}, "
+            f"comparison_dimension={data.get('comparison_dimension')}"
         )
     if tool_name == "ownership_penetration":
         summary = data.get("summary") or {}

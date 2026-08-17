@@ -4,7 +4,7 @@ from schemas.enums import ToolName
 
 def test_financial_query_routes_to_financial_tool() -> None:
     plan = route_query("分析一下这家公司的存货和现金流风险")
-    assert plan.tool_calls[0].tool_name == ToolName.FINANCIAL_RISK_ANALYSIS
+    assert plan.tool_calls[0].tool_name == ToolName.FINANCIAL_ANALYSIS
 
 
 def test_ownership_query_routes_to_graph_tool() -> None:
@@ -15,20 +15,21 @@ def test_ownership_query_routes_to_graph_tool() -> None:
 def test_rule_planner_extracts_structured_arguments() -> None:
     plan = route_query("分析000001.SZ在2022年的存货和现金流风险，并结合问询函")
     tool_names = [call.tool_name for call in plan.tool_calls]
-    assert ToolName.FINANCIAL_RISK_ANALYSIS in tool_names
+    assert ToolName.FINANCIAL_ANALYSIS in tool_names
     assert ToolName.DOCUMENT_SEARCH in tool_names
-    financial_call = next(call for call in plan.tool_calls if call.tool_name == ToolName.FINANCIAL_RISK_ANALYSIS)
+    financial_call = next(call for call in plan.tool_calls if call.tool_name == ToolName.FINANCIAL_ANALYSIS)
     document_call = next(call for call in plan.tool_calls if call.tool_name == ToolName.DOCUMENT_SEARCH)
     assert financial_call.arguments["company_ids"] == ["000001.SZ"]
     assert financial_call.arguments["report_periods"] == ["2022-12-31"]
-    assert financial_call.arguments["focus_topics"] == ["inventory", "cashflow"]
+    assert financial_call.arguments["operation"] == "metric_query"
+    assert financial_call.arguments["metric_codes"] == ["INVENTORY", "OPERATING_CASHFLOW"]
     assert document_call.arguments["document_types"] == ["inquiry_letter"]
 
 
 def test_comprehensive_analysis_proactively_routes_financial_and_ownership_tools() -> None:
     plan = route_query("请对000001.SZ做一次综合分析")
     tool_names = [call.tool_name for call in plan.tool_calls]
-    assert tool_names == [ToolName.FINANCIAL_RISK_ANALYSIS, ToolName.OWNERSHIP_PENETRATION]
+    assert tool_names == [ToolName.FINANCIAL_ANALYSIS, ToolName.OWNERSHIP_PENETRATION]
 
 
 def test_llm_planner_uses_separate_model_env(monkeypatch) -> None:

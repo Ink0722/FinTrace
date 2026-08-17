@@ -1,0 +1,229 @@
+# financial_analysis
+
+`financial_analysis` 对比赛提供的资产负债表、利润表和现金流量表执行精确指标查询及确定性数值比较。当前版本只开放 `metric_query` 和 `metric_compare`，不执行财务风险扫描，也不输出风险评分。
+
+## 入口
+
+```python
+tools.financial_analysis.interface.financial_analysis(call: ToolCall) -> ToolResult
+```
+
+工具名称和枚举值统一为：
+
+```text
+financial_analysis
+ToolName.FINANCIAL_ANALYSIS
+```
+
+旧名称 `financial_risk_analysis`、CSV 数据源和内置样例均已删除，不提供兼容别名或数据兜底。
+
+## 数据与索引
+
+来源数据：
+
+```text
+data/normalized/balance_sheets.jsonl
+data/normalized/income_statements.jsonl
+data/normalized/cashflows.jsonl
+```
+
+三张表是宽 JSONL。为了避免每次调用扫描约 467MB 数据，离线构建器只抽取指标目录中已确认的字段，生成窄表 SQLite：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.financial.build_index
+```
+
+产物：
+
+```text
+data/indexes/financial_analysis/financial_metrics.sqlite
+data/indexes/financial_analysis/manifest.json
+```
+
+normalized JSONL 是事实来源，SQLite 只是可重建的在线查询索引。工具不会读取旧 CSV，也不会在索引缺失时回退样例；索引不存在会返回 `DATA_NOT_AVAILABLE` 和构建命令。
+
+每次调用都会检查 `manifest.json` 的映射版本，以及三张 normalized 文件的大小和修改时间。来源发生变化或 manifest 缺失时拒绝查询旧索引，并要求重新构建；完整 SHA-256 保存在 manifest 中供离线审计。
+
+## 配置
+
+```dotenv
+FINTRACE_FINANCIAL_NORMALIZED_DIR=data/normalized
+FINTRACE_FINANCIAL_INDEX_PATH=data/indexes/financial_analysis/financial_metrics.sqlite
+```
+
+相对路径从项目根目录解析。
+
+## Operations
+
+### `metric_query`
+
+查询指定公司、报告期和标准指标，不计算期间或公司差异。
+
+```json
+{
+  "operation": "metric_query",
+  "company_ids": ["600519.SH"],
+  "metric_codes": ["REVENUE", "NET_PROFIT_PARENT"],
+  "report_periods": ["2024-12-31"],
+  "statement_types": ["income_statement"],
+  "currency": "CNY",
+  "knowledge_cutoff": "2025-04-30"
+}
+```
+
+必填参数：
+
+- `company_ids`：至少一个证券代码，始终使用数组。
+- `metric_codes`：至少一个指标代码。
+- `report_periods`：至少一个 ISO 报告期截止日。
+
+可选参数：
+
+- `statement_types`：`balance_sheet`、`income_statement`、`cashflow_statement`。
+- `currency`：当前数据只支持 `CNY`。
+- `knowledge_cutoff`：允许使用信息的最晚公告日期。
+- `query`：保留原始问题，仅用于审计，不参与数值查询。
+
+输出：
+
+- `values`：指标值、期间、单位、公告日期、原始字段和来源记录。
+- `missing`：没有找到的公司、期间、指标组合。
+- `record_count`：实际命中指标记录数。
+
+部分组合缺失时工具成功返回并附 warning；全部组合无数据时返回 `DATA_NOT_AVAILABLE`。
+
+### `metric_compare`
+
+只支持两种明确比较维度。
+
+跨期比较：
+
+```text
+company_ids：恰好 1 个
+report_periods：至少 2 个
+```
+
+```json
+{
+  "operation": "metric_compare",
+  "company_ids": ["600519.SH"],
+  "metric_codes": ["REVENUE"],
+  "report_periods": ["2023-12-31", "2024-12-31"],
+  "comparison_method": "both"
+}
+```
+
+返回有序数值、相邻变化和首尾累计变化。
+
+跨公司比较：
+
+```text
+company_ids：至少 2 个
+report_periods：恰好 1 个
+```
+
+返回各公司同口径数值、排序及最大值和最小值的差异。公司类型代码不一致时给出 warning，不构造行业基准或市场排名。
+
+`comparison_method`：
+
+- `absolute`：只计算变化额。
+- `percent`：只计算变化率。
+- `both`：同时计算，默认值。
+
+变化率公式：
+
+```text
+(current - previous) / abs(previous)
+```
+
+前值为零时变化率为 `null`，并返回 warning。
+
+## 期间口径
+
+| 报告期后缀 | `period_type` |
+|---|---|
+| `03-31` | `Q1` |
+| `06-30` | `H1` |
+| `09-30` | `Q3_YTD` |
+| `12-31` | `FY` |
+
+资产负债表指标是 `instant` 时点值。利润表和现金流量表指标是 `year_to_date` 累计值，只允许跨相同期间类型比较，例如 FY 对 FY、Q1 对 Q1。工具拒绝把半年累计值与全年值直接计算增长率。
+
+当前版本不计算 CAGR，也不通过累计值反推单季度值。
+
+## 指标目录
+
+| 指标代码 | 原始字段 | 报表 | 数值性质 |
+|---|---|---|---|
+| `TOTAL_ASSETS` | `tot_assets` | 资产负债表 | `instant` |
+| `TOTAL_LIABILITIES` | `tot_liab` | 资产负债表 | `instant` |
+| `CURRENT_ASSETS` | `tot_cur_assets` | 资产负债表 | `instant` |
+| `CURRENT_LIABILITIES` | `tot_cur_liab` | 资产负债表 | `instant` |
+| `INVENTORY` | `inventories` | 资产负债表 | `instant` |
+| `ACCOUNTS_RECEIVABLE` | `acct_rcv` | 资产负债表 | `instant` |
+| `MONETARY_CAPITAL` | `monetary_cap` | 资产负债表 | `instant` |
+| `REVENUE` | `oper_rev` | 利润表 | `year_to_date` |
+| `OPERATING_COST` | `less_oper_cost` | 利润表 | `year_to_date` |
+| `NET_PROFIT_PARENT` | `net_profit_excl_min_int_inc` | 利润表 | `year_to_date` |
+| `OPERATING_PROFIT` | `oper_profit` | 利润表 | `year_to_date` |
+| `R_AND_D_EXPENSE` | `rd_expense` | 利润表 | `year_to_date` |
+| `OPERATING_CASHFLOW` | `net_cash_flows_oper_act` | 现金流量表 | `year_to_date` |
+| `CASH_RECEIVED_FROM_SALES` | `cash_recp_sg_and_rs` | 现金流量表 | `year_to_date` |
+
+映射版本为 `financial-metrics-v1`。不在多个相似字段间静默回退：例如 `REVENUE` 固定使用 `oper_rev`，`ACCOUNTS_RECEIVABLE` 固定使用 `acct_rcv`。值缺失就明确报告缺失。
+
+原始 `statement_type=408006000` 保存在 `statement_type_raw` 中，在没有代码字典确认前不解释为合并、母公司或调整口径。
+
+## Evidence
+
+每条指标生成稳定 Evidence，包含：
+
+- 公司和报告期；
+- 指标代码、数值和币种；
+- `instant/year_to_date` 数值性质；
+- 公告日期；
+- normalized 来源文件、原始字段和 `object_id`；
+- 指标映射版本。
+
+数据不含财报页码，因此 Evidence 使用来源记录 `object_id` 作为 `row_id`，不能伪造页码或财报原文位置。
+
+## knowledge_cutoff
+
+提供 `knowledge_cutoff` 时只允许：
+
+```text
+announcement_date <= knowledge_cutoff
+```
+
+公告日期优先使用 normalized 记录的 `actual_ann_dt`，缺失时才使用 `ann_dt`。未传截止日时使用当前 normalized 快照中的全部披露，并返回 warning，提醒结果没有执行历史可知性过滤。
+
+## 暂不支持 risk_scan
+
+传入：
+
+```json
+{"operation": "risk_scan"}
+```
+
+工具返回 `UNSUPPORTED_QUERY`。当前代码不保留旧风险规则作为隐藏兜底，Planner 也不得生成该 operation。
+
+`metric_query` 和 `metric_compare` 只提供事实和计算结果。Agent 可以解释数值变化，但不能把它们描述为完整风险扫描、财务造假识别或风险评分。
+
+## 文件职责
+
+- `interface.py`：参数模型、operation 分发、错误边界和 ToolResult。
+- `config.py`：normalized 与 SQLite 路径。
+- `metric_catalog.py`：标准指标映射和期间类型。
+- `repository.py`：SQLite 精确查询。
+- `query.py`：查询结果和缺失组合。
+- `comparison.py`：跨期、跨公司确定性计算。
+- `evidence.py`：指标 Evidence。
+- `data_pipeline/financial/build_index.py`：normalized JSONL 到 SQLite。
+
+## 测试
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m pytest tests\test_financial_analysis.py -q
+```
+
+测试使用临时 normalized JSONL 和临时 SQLite，不依赖正式索引内容。

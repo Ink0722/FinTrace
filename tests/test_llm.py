@@ -1,5 +1,7 @@
 from harness.llm import QwenClient
 from harness.graph.workflow import run_agent
+from schemas.enums import ToolStatus
+from schemas.tool_results import ToolResult
 
 import requests
 
@@ -41,6 +43,14 @@ def test_llm_timeout_warns_without_crashing(monkeypatch) -> None:
         raise requests.ReadTimeout("timeout for test")
 
     monkeypatch.setattr("harness.llm.requests.post", raise_timeout)
+    monkeypatch.setattr(
+        "harness.graph.nodes.execute_tool",
+        lambda call: ToolResult(
+            tool_call_id=call.tool_call_id,
+            tool_name=call.tool_name,
+            status=ToolStatus.SUCCESS,
+        ),
+    )
     state = run_agent("分析一下示例公司的财务风险", session_id="TEST-LLM-TIMEOUT")
     assert state.final_answer is not None
     assert "LLM 生成失败" in state.final_answer

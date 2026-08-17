@@ -19,7 +19,8 @@ def test_load_planner_prompt_uses_prompt_file() -> None:
     prompt = load_planner_prompt()
     assert "工具计划生成器" in prompt
     assert "tool_calls" in prompt
-    assert "financial_risk_analysis" in prompt
+    assert "financial_analysis" in prompt
+    assert "risk_scan" in prompt
     assert "ownership_penetration" in prompt
     assert "综合分析" in prompt
 

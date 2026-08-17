@@ -20,7 +20,7 @@ from schemas.tool_calls import ExecutionPlan, ToolCall
 
 KEYWORD_RULES: list[tuple[ToolName, tuple[str, ...]]] = [
     (ToolName.OWNERSHIP_PENETRATION, ("实控人", "股东", "持股", "穿透", "控制链", "控制")),
-    (ToolName.FINANCIAL_RISK_ANALYSIS, ("利润", "现金流", "存货", "应收", "毛利率", "偿债", "财务")),
+    (ToolName.FINANCIAL_ANALYSIS, ("利润", "现金流", "存货", "应收", "毛利率", "偿债", "财务")),
     (ToolName.DOCUMENT_SEARCH, ("问询函", "审计报告", "附注", "原文", "依据", "研报", "公告")),
     (ToolName.EVENT_TIMELINE, ("时间线", "经过", "什么时候", "舆情", "事件", "后来", "处罚", "变更")),
 ]
@@ -130,7 +130,7 @@ def normalize_llm_plan(query: str, payload: dict[str, Any]) -> ExecutionPlan:
 def select_tools_by_rules(query: str) -> list[ToolName]:
     selected: list[ToolName] = []
     if any(keyword in query for keyword in COMPREHENSIVE_ANALYSIS_KEYWORDS):
-        selected.extend([ToolName.FINANCIAL_RISK_ANALYSIS, ToolName.OWNERSHIP_PENETRATION])
+        selected.extend([ToolName.FINANCIAL_ANALYSIS, ToolName.OWNERSHIP_PENETRATION])
     for tool_name, keywords in KEYWORD_RULES:
         if tool_name not in selected and any(keyword in query for keyword in keywords):
             selected.append(tool_name)
@@ -167,12 +167,12 @@ def build_tool_arguments(tool_name: ToolName, query: str, common_args: dict[str,
         arguments.setdefault("target_entity_id", common_args["company_ids"][0])
         arguments.setdefault("max_depth", 5)
         arguments.setdefault("relation_types", ["OWNS", "CONTROLS"])
-    elif tool_name == ToolName.FINANCIAL_RISK_ANALYSIS:
+    elif tool_name == ToolName.FINANCIAL_ANALYSIS:
+        arguments["operation"] = "metric_query"
         arguments["company_ids"] = common_args["company_ids"]
+        arguments["metric_codes"] = infer_financial_metric_codes(query)
         if common_args.get("report_periods"):
             arguments["report_periods"] = common_args["report_periods"]
-        if common_args.get("focus_topics"):
-            arguments["focus_topics"] = common_args["focus_topics"]
     return arguments
 
 
@@ -180,3 +180,18 @@ def infer_intent(selected: list[ToolName]) -> str:
     if len(selected) > 1:
         return "multi_tool_analysis"
     return selected[0].value
+
+
+def infer_financial_metric_codes(query: str) -> list[str]:
+    mappings = (
+        ("INVENTORY", ("存货", "库存")),
+        ("ACCOUNTS_RECEIVABLE", ("应收", "回款")),
+        ("OPERATING_CASHFLOW", ("经营现金流", "现金流")),
+        ("NET_PROFIT_PARENT", ("归母净利润", "净利润", "利润")),
+        ("REVENUE", ("营收", "营业收入", "收入")),
+        ("TOTAL_LIABILITIES", ("总负债", "负债")),
+        ("CURRENT_LIABILITIES", ("流动负债", "偿债")),
+        ("CURRENT_ASSETS", ("流动资产",)),
+    )
+    selected = [code for code, keywords in mappings if any(keyword in query for keyword in keywords)]
+    return selected or ["REVENUE", "NET_PROFIT_PARENT", "OPERATING_CASHFLOW"]
