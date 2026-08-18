@@ -2,6 +2,8 @@
 
 FinTrace 是一个面向 A 股投研场景的证据驱动型 Agentic AI 问答系统骨架。
 
+Last Update on Codex 2026/8/18
+
 当前版本已经具备：
 
 - 项目技术拆解和目录结构；
