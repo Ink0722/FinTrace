@@ -3,7 +3,7 @@ from enum import StrEnum
 
 class ToolName(StrEnum):
     DOCUMENT_SEARCH = "document_search"
-    OWNERSHIP_PENETRATION = "ownership_penetration"
+    OWNERSHIP_ANALYSIS = "ownership_analysis"
     EVENT_TIMELINE = "event_timeline"
     FINANCIAL_ANALYSIS = "financial_analysis"
 

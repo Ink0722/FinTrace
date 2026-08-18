@@ -7,9 +7,10 @@ def test_financial_query_routes_to_financial_tool() -> None:
     assert plan.tool_calls[0].tool_name == ToolName.FINANCIAL_ANALYSIS
 
 
-def test_ownership_query_routes_to_graph_tool() -> None:
+def test_ownership_query_routes_to_ownership_tool() -> None:
     plan = route_query("张某通过哪些主体控制这家公司")
-    assert plan.tool_calls[0].tool_name == ToolName.OWNERSHIP_PENETRATION
+    assert plan.tool_calls[0].tool_name == ToolName.OWNERSHIP_ANALYSIS
+    assert plan.tool_calls[0].arguments["operation"] == "holding_query"
 
 
 def test_rule_planner_extracts_structured_arguments() -> None:
@@ -29,7 +30,7 @@ def test_rule_planner_extracts_structured_arguments() -> None:
 def test_comprehensive_analysis_proactively_routes_financial_and_ownership_tools() -> None:
     plan = route_query("请对000001.SZ做一次综合分析")
     tool_names = [call.tool_name for call in plan.tool_calls]
-    assert tool_names == [ToolName.FINANCIAL_ANALYSIS, ToolName.OWNERSHIP_PENETRATION]
+    assert tool_names == [ToolName.FINANCIAL_ANALYSIS, ToolName.OWNERSHIP_ANALYSIS]
 
 
 def test_llm_planner_uses_separate_model_env(monkeypatch) -> None:

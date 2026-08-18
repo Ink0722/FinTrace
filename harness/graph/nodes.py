@@ -105,11 +105,12 @@ def check_evidence_node(state: AgentState) -> AgentState:
     for result in state.tool_results:
         if result.tool_name.value == "document_search" and not result.data.get("hits"):
             warnings.append("document_search 未召回原文片段。")
-        if result.tool_name.value == "ownership_penetration":
-            for path in result.data.get("paths", []):
-                for hop in path.get("hops", []):
-                    if not hop.get("evidence_id"):
-                        warnings.append("ownership_penetration 存在缺少 evidence_id 的路径跳。")
+        if result.tool_name.value == "ownership_analysis":
+            for company in result.data.get("companies", []):
+                holders = company.get("holders") or company.get("holdings") or []
+                for holder in holders:
+                    if not holder.get("evidence_id"):
+                        warnings.append("ownership_analysis 存在缺少 evidence_id 的持股记录。")
     for warning in warnings:
         if warning not in state.warnings:
             state.warnings.append(warning)

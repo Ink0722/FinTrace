@@ -224,12 +224,16 @@ def summarize_tool_result(result: dict) -> str:
             f"operation={data.get('operation')}, record_count={data.get('record_count')}, "
             f"comparison_dimension={data.get('comparison_dimension')}"
         )
-    if tool_name == "ownership_penetration":
-        summary = data.get("summary") or {}
-        highest = summary.get("highest_ratio_path") or {}
-        ratio = highest.get("indirect_ratio")
-        ratio_text = f"{ratio:.2%}" if isinstance(ratio, (int, float)) else "N/A"
-        return f"path_count={summary.get('path_count')}, highest_indirect_ratio={ratio_text}, as_of_date={data.get('as_of_date')}"
+    if tool_name == "ownership_analysis":
+        companies = data.get("companies") or []
+        holder_count = sum(
+            len(company.get("holders") or company.get("holdings") or []) for company in companies
+        )
+        return (
+            f"operation={data.get('operation')}, direction={data.get('direction')}, "
+            f"company_count={len(companies)}, holder_count={holder_count}, "
+            f"as_of_date={data.get('as_of_date')}"
+        )
     if tool_name == "document_search":
         hits = data.get("hits") or []
         top_ids = [hit.get("evidence_id") for hit in hits[:3]]

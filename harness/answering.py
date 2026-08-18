@@ -124,11 +124,12 @@ def _completed_tool_summary_lines(state: AgentState) -> list[str]:
                 f"record_count={data.get('record_count')}, "
                 f"comparison_dimension={data.get('comparison_dimension')}"
             )
-        elif result.tool_name.value == "ownership_penetration":
-            summary = data.get("summary", {})
+        elif result.tool_name.value == "ownership_analysis":
+            companies = data.get("companies", [])
             lines.append("")
             lines.append(
-                f"ownership_penetration：path_count={summary.get('path_count')}, "
+                f"ownership_analysis：operation={data.get('operation')}, "
+                f"direction={data.get('direction')}, company_count={len(companies)}, "
                 f"as_of_date={data.get('as_of_date')}"
             )
         elif result.tool_name.value == "document_search":

@@ -19,7 +19,7 @@ from schemas.tool_calls import ExecutionPlan, ToolCall
 
 
 KEYWORD_RULES: list[tuple[ToolName, tuple[str, ...]]] = [
-    (ToolName.OWNERSHIP_PENETRATION, ("实控人", "股东", "持股", "穿透", "控制链", "控制")),
+    (ToolName.OWNERSHIP_ANALYSIS, ("实控人", "股东", "持股", "穿透", "控制链", "控制", "十大", "减持", "增持")),
     (ToolName.FINANCIAL_ANALYSIS, ("利润", "现金流", "存货", "应收", "毛利率", "偿债", "财务")),
     (ToolName.DOCUMENT_SEARCH, ("问询函", "审计报告", "附注", "原文", "依据", "研报", "公告")),
     (ToolName.EVENT_TIMELINE, ("时间线", "经过", "什么时候", "舆情", "事件", "后来", "处罚", "变更")),
@@ -130,7 +130,7 @@ def normalize_llm_plan(query: str, payload: dict[str, Any]) -> ExecutionPlan:
 def select_tools_by_rules(query: str) -> list[ToolName]:
     selected: list[ToolName] = []
     if any(keyword in query for keyword in COMPREHENSIVE_ANALYSIS_KEYWORDS):
-        selected.extend([ToolName.FINANCIAL_ANALYSIS, ToolName.OWNERSHIP_PENETRATION])
+        selected.extend([ToolName.FINANCIAL_ANALYSIS, ToolName.OWNERSHIP_ANALYSIS])
     for tool_name, keywords in KEYWORD_RULES:
         if tool_name not in selected and any(keyword in query for keyword in keywords):
             selected.append(tool_name)
@@ -163,10 +163,10 @@ def build_tool_arguments(tool_name: ToolName, query: str, common_args: dict[str,
         event_types = extract_event_types(query)
         if event_types:
             arguments["event_types"] = event_types
-    elif tool_name == ToolName.OWNERSHIP_PENETRATION:
-        arguments.setdefault("target_entity_id", common_args["company_ids"][0])
-        arguments.setdefault("max_depth", 5)
-        arguments.setdefault("relation_types", ["OWNS", "CONTROLS"])
+    elif tool_name == ToolName.OWNERSHIP_ANALYSIS:
+        arguments["operation"] = "holding_query"
+        arguments["company_ids"] = common_args["company_ids"]
+        arguments.setdefault("top_n", 10)
     elif tool_name == ToolName.FINANCIAL_ANALYSIS:
         arguments["operation"] = "metric_query"
         arguments["company_ids"] = common_args["company_ids"]

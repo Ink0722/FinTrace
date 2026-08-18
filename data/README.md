@@ -16,7 +16,7 @@ data/
   indexes/
     document_search/      SQLite, embeddings and FAISS artifacts
     event_timeline/       Event query indexes
-    ownership_graph/      Ownership graph artifacts
+    ownership_analysis/  Shareholder holdings SQLite index
     financial_analysis/   Financial query indexes
   evaluation/             Evaluation questions and annotations
 ```

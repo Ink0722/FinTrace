@@ -52,7 +52,7 @@ app.cli.main()
       → harness.guards.validation.validate_plan()
    → execute_tools_node()
       → tools.registry.execute_tool()
-      → document_search / financial_analysis / ownership_penetration / event_timeline
+      → document_search / financial_analysis / ownership_analysis / event_timeline
       → harness.evidence.ledger.merge_evidence()
    → validate_tool_results_node()
       → harness.guards.validation.validate_tool_result()
@@ -300,14 +300,14 @@ deployment/
 - 工具必须能脱离 Agent 独立测试；
 - MVP 优先稳定、可解释、可评测。
 
-Planner 采用“按需调用、综合分析主动检查”的策略：普通指标、公告或股东事实查询只调用必要工具。当前 `financial_analysis` 负责三张 normalized 财务报表的精确指标查询和确定性比较，`ownership_penetration` 负责现有证据支持的资本关联和多层持股路径。财务 `risk_scan` 尚未实现，Agent 不得把指标比较描述成完整风险扫描。现有比赛文件不含历史或实时行情，相关问题返回数据不支持，不由 LLM 凭记忆补充。
+Planner 采用“按需调用、综合分析主动检查”的策略：普通指标、公告或股东事实查询只调用必要工具。当前 `financial_analysis` 负责三张 normalized 财务报表的精确指标查询和确定性比较，`ownership_analysis` 负责主要股东快照查询、股东反查和跨期持股变化。财务 `risk_scan` 和股权 `penetration` 尚未实现，Agent 不得把指标比较描述成完整风险扫描，也不得把主要股东名单表述为完整控制关系。现有比赛文件不含历史或实时行情，相关问题返回数据不支持，不由 LLM 凭记忆补充。
 
 ## 当前工具进度
 
 | 工具 | 当前状态 | 数据来源 |
 |---|---|---|
 | `financial_analysis` | 已支持 normalized 三表索引、`metric_query`、`metric_compare` 和行级证据；`risk_scan` 暂未实现 | `data/normalized/*.jsonl` / `data/indexes/financial_analysis/financial_metrics.sqlite` |
-| `ownership_penetration` | 已支持 CSV 数据源、有界图搜索、穿透比例和关系证据 | `data/ownership/*.csv` / `tools/ownership_graph/sample_data.py` |
+| `ownership_analysis` | 已支持 normalized 股东快照索引、`holding_query`、`holding_compare`、有效快照选择、集中度和行级证据；`penetration` 暂未实现 | `data/normalized/shareholders.jsonl` / `data/indexes/ownership_analysis/ownership_holdings.sqlite` |
 | `document_search` | 已支持 SQLite 知识库优先检索；无知识库时回退样例 BM25 | `data/indexes/document_search/fintrace_kb.sqlite` / `tools/document_search/sample_data.py` |
 | `event_timeline` | 已支持 CSV 事件数据、时间过滤、事件聚类和证据绑定 | `data/events/events.csv` / `tools/event_timeline/sample_data.py` |
 
@@ -541,65 +541,28 @@ faiss-cpu    # 本地向量索引
 numpy        # 向量矩阵处理
 ```
 
-## 股权穿透数据
+## 股东持股数据
 
-`ownership_penetration` 支持数据源抽象，当前实现：
+`ownership_analysis` 直接以 normalized 十大股东快照为事实来源，离线构建 SQLite 索引，在线查询不回退样例数据。
 
-```text
-sample  # 内置样例
-csv     # data/ownership/entities.csv + relations.csv
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.ownership.build_index
 ```
 
 环境变量：
 
-```text
-OWNERSHIP_DATA_SOURCE=csv
-OWNERSHIP_ENTITIES_PATH=data/ownership/entities.csv
-OWNERSHIP_RELATIONS_PATH=data/ownership/relations.csv
+```dotenv
+FINTRACE_OWNERSHIP_NORMALIZED_DIR=data/normalized
+FINTRACE_OWNERSHIP_INDEX_PATH=data/indexes/ownership_analysis/ownership_holdings.sqlite
 ```
 
-`entities.csv`：
+离线导入会为每条持股记录生成稳定 `EVID-OWN-` 证据、按 `s_info_compcode` 生成 resolved 主体 ID（缺失时生成不跨公司合并的 unresolved 主体 ID），并折叠完全重复的记录。`manifest.json` 记录源文件指纹，源数据变化后在线查询会要求重建。
 
-```csv
-entity_id,entity_name,entity_type,company_id
-PERSON-001,张某,PERSON,
-HOLDCO-001,示例控股有限公司,COMPANY,
-000001.SZ,示例公司,LISTED_COMPANY,000001.SZ
-```
+在线查询的核心是有效快照选择：对每个观察时点 `as_of_date`，只使用 `announcement_date <= as_of_date`（防止前视）且 `holder_end_date <= as_of_date` 的最晚快照；`as_of_date` 省略时使用最新已披露快照并在结果中回显实际日期。股东排名按同一快照内持股比例降序计算，不使用缺失严重的 `s_holder_sequence`。
 
-`relations.csv`：
+当前开放 `holding_query`（正向快照 + 集中度、按股东名反查、交叉过滤）和 `holding_compare`（进入、退出、增持、减持）。`penetration` 暂未实现，调用返回 `UNSUPPORTED_QUERY`。完整参数、实体 ID 规则和质量标志见 `tools/ownership_analysis/README.md`。
 
-```csv
-source_entity_id,target_entity_id,relation_type,ratio,start_date,end_date,evidence_id,source_doc_id,source_path,page
-PERSON-001,HOLDCO-001,OWNS,80%,2020-01-01,,EVID-OWN-001,DOC-001,data/raw_documents/ownership.pdf,12
-HOLDCO-001,000001.SZ,OWNS,0.35,2020-01-01,,EVID-OWN-002,DOC-002,data/raw_documents/annual_report.pdf,24
-```
-
-支持关系类型：
-
-```text
-OWNS
-CONTROLS
-ACTS_IN_CONCERT
-VOTING_RIGHTS
-```
-
-回退策略：
-
-- CSV 不存在且未强制 `OWNERSHIP_DATA_SOURCE=csv`：使用内置样例，并返回 warning；
-- CSV 存在但目标公司没有关系：返回 `DATA_NOT_AVAILABLE`，不回退样例；
-- CSV 校验失败：返回 `VALIDATION_FAILED`。
-
-图搜索采用有界搜索：
-
-```text
-target 反向 BFS 子图
-→ source 到 target 的有界 DFS
-→ max_depth 默认 5，最高 8
-→ max_paths 默认 50，最高 200
-```
-
-路径会按控制关系、穿透比例、路径长度和证据完整性排序，避免在大图上无限枚举路径。
+结果固定携带能力边界：仅基于主要股东披露数据，不构成完整股权或实际控制人认定；退出主要股东名单不等于清仓。
 
 ## 财务结构化数据
 
@@ -748,7 +711,8 @@ CLI 使用 `--trace` 时会把 LangGraph 实际经过的 `executed_nodes` 转换
 
 ```text
 分析一下示例公司的存货和现金流风险
-张某通过哪些主体控制这家公司
+300838.SZ 2024 年一季度末的前十大股东有哪些
+张三持有 300838.SZ 多少股份，2024 年以来有没有减持
 监管问询函有没有关注存货跌价准备
 这家公司后来发生了哪些监管和控制权事件
 ```
