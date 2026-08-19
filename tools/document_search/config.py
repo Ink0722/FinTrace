@@ -12,6 +12,7 @@ DEFAULT_KB_PATH = PROJECT_ROOT / "data" / "indexes" / "document_search" / "fintr
 @dataclass(frozen=True)
 class DocumentSearchConfig:
     kb_path: Path
+    bm25_index_path: Path
     demo_mode: bool
     default_mode: str
     default_top_k: int
@@ -25,6 +26,9 @@ class DocumentSearchConfig:
     def from_env(cls) -> "DocumentSearchConfig":
         return cls(
             kb_path=_configured_path("FINTRACE_KB_PATH", DEFAULT_KB_PATH),
+            bm25_index_path=_configured_path(
+                "FINTRACE_BM25_INDEX_PATH", DEFAULT_KB_PATH.parent / "bm25_index.sqlite"
+            ),
             demo_mode=_env_bool("FINTRACE_DOCUMENT_SEARCH_DEMO_MODE", False),
             default_mode=os.getenv("FINTRACE_DOCUMENT_SEARCH_DEFAULT_MODE", "hybrid").strip().lower(),
             default_top_k=_env_int("FINTRACE_DOCUMENT_SEARCH_DEFAULT_TOP_K", 8, minimum=1),

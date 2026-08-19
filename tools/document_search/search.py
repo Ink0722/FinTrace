@@ -7,6 +7,11 @@ from schemas.document import DocumentChunk, DocumentSearchHit
 from schemas.evidence import Evidence, EvidenceSource
 
 
+# Bump when the tokenize() vocabulary semantics change so offline FTS5 indexes
+# built with an older tokenizer are rejected instead of silently mismatching.
+BM25_TOKENIZER_VERSION = "bm25-bigram-v1"
+
+
 def tokenize(text: str) -> list[str]:
     tokens: list[str] = []
     for value in re.findall(r"[A-Za-z0-9_.]+|[\u4e00-\u9fff]+", text.lower()):

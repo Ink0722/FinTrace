@@ -12,11 +12,13 @@ from schemas.enums import ErrorType, ToolName, ToolStatus
 from schemas.tool_calls import ToolCall
 from schemas.tool_results import ToolError, ToolMetrics, ToolResult
 from tools.document_search.config import DocumentSearchConfig
-from tools.document_search.kb_loader import (
-    knowledge_base_available,
-    load_filtered_chunk_ids,
-    load_kb_chunks,
+from tools.document_search.fts5_search import (
+    LexicalSearchOutcome,
+    bm25_index_available,
+    fts5_search,
+    validate_bm25_index_snapshot,
 )
+from tools.document_search.kb_loader import knowledge_base_available, load_filtered_chunk_ids
 from tools.document_search.sample_data import load_sample_chunks
 from tools.document_search.search import bm25_search, evidence_from_hits, filter_chunks
 from tools.document_search.vector_search import (
@@ -27,6 +29,9 @@ from tools.document_search.vector_search import (
     vector_index_available,
     vector_search,
 )
+
+
+BM25_BUILD_COMMAND = "python -m data_pipeline.documents.build_bm25_index"
 
 
 class DocumentSearchArguments(BaseModel):
@@ -105,31 +110,41 @@ def document_search(call: ToolCall) -> ToolResult:
     metadata_time_ms = 0
     lexical_time_ms = 0
     vector_outcome = VectorSearchOutcome(hits=[])
+    lexical_outcome = LexicalSearchOutcome(hits=[])
+    chunks: list = []
 
     if knowledge_base_available(kb_path):
+        if arguments.mode in {"bm25", "hybrid"}:
+            if not bm25_index_available(config.bm25_index_path):
+                return _error_result(
+                    call,
+                    started,
+                    ErrorType.DATA_NOT_AVAILABLE,
+                    f"BM25 FTS5 index not found: {config.bm25_index_path}",
+                    details={
+                        "bm25_index_path": str(config.bm25_index_path),
+                        "build_command": BM25_BUILD_COMMAND,
+                    },
+                )
+            index_errors = validate_bm25_index_snapshot(config.bm25_index_path, kb_path)
+            if index_errors:
+                return _error_result(
+                    call,
+                    started,
+                    ErrorType.DATA_NOT_AVAILABLE,
+                    "BM25 FTS5 index is stale or incomplete; rebuild it from the knowledge base.",
+                    details={"errors": index_errors, "build_command": BM25_BUILD_COMMAND},
+                )
         try:
             metadata_started = time.perf_counter()
-            chunks = []
-            if arguments.mode in {"bm25", "hybrid"}:
-                chunks = load_kb_chunks(
+            allowed_chunk_ids = None
+            if _has_metadata_filter(arguments):
+                allowed_chunk_ids = load_filtered_chunk_ids(
                     company_id=_company_id(arguments),
                     document_types=arguments.document_types,
                     start_date=arguments.start_date,
                     end_date=arguments.end_date,
                     kb_path=kb_path,
-                )
-            allowed_chunk_ids = None
-            if _has_metadata_filter(arguments):
-                allowed_chunk_ids = (
-                    {chunk.chunk_id for chunk in chunks}
-                    if chunks
-                    else load_filtered_chunk_ids(
-                        company_id=_company_id(arguments),
-                        document_types=arguments.document_types,
-                        start_date=arguments.start_date,
-                        end_date=arguments.end_date,
-                        kb_path=kb_path,
-                    )
                 )
             metadata_time_ms = _elapsed_ms(metadata_started)
         except (OSError, sqlite3.Error, ValueError) as exc:
@@ -161,11 +176,32 @@ def document_search(call: ToolCall) -> ToolResult:
         )
 
     lexical_started = time.perf_counter()
-    bm25_hits = (
-        bm25_search(chunks, query=arguments.query, top_k=pool_k)
-        if arguments.mode in {"bm25", "hybrid"}
-        else []
-    )
+    if arguments.mode not in {"bm25", "hybrid"}:
+        bm25_hits = []
+    elif source == "knowledge_base":
+        try:
+            lexical_outcome = fts5_search(
+                query=arguments.query,
+                index_path=config.bm25_index_path,
+                kb_path=kb_path,
+                top_k=pool_k,
+                company_id=_company_id(arguments),
+                document_types=arguments.document_types,
+                start_date=arguments.start_date,
+                end_date=arguments.end_date,
+            )
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            return _error_result(
+                call,
+                started,
+                ErrorType.TEMPORARY_DATABASE_ERROR,
+                f"BM25 FTS5 index query failed: {type(exc).__name__}: {exc}",
+                retryable=isinstance(exc, sqlite3.OperationalError),
+                metadata_time_ms=metadata_time_ms,
+            )
+        bm25_hits = lexical_outcome.hits
+    else:
+        bm25_hits = bm25_search(chunks, query=arguments.query, top_k=pool_k)
     lexical_time_ms = _elapsed_ms(lexical_started)
 
     vector_available = source == "knowledge_base" and vector_index_available(kb_dir)
@@ -251,9 +287,16 @@ def document_search(call: ToolCall) -> ToolResult:
             "retrieval_debug": {
                 "mode": arguments.mode,
                 "fusion": "rrf" if arguments.mode == "hybrid" and vector_outcome.hits else None,
-                "candidate_chunk_count": len(chunks)
-                if arguments.mode in {"bm25", "hybrid"}
-                else vector_outcome.candidate_count,
+                "candidate_chunk_count": (
+                    lexical_outcome.candidate_count
+                    if arguments.mode in {"bm25", "hybrid"} and source == "knowledge_base"
+                    else len(chunks)
+                    if arguments.mode in {"bm25", "hybrid"}
+                    else vector_outcome.candidate_count
+                ),
+                "lexical_strategy": (
+                    lexical_outcome.strategy if source == "knowledge_base" else "in_memory_sample"
+                ),
                 "bm25_hit_count": len(bm25_hits),
                 "vector_hit_count": len(vector_outcome.hits),
                 "vector_strategy": vector_outcome.strategy,
