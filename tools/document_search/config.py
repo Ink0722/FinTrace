@@ -24,10 +24,11 @@ class DocumentSearchConfig:
 
     @classmethod
     def from_env(cls) -> "DocumentSearchConfig":
+        kb_path = _configured_path("FINTRACE_KB_PATH", DEFAULT_KB_PATH)
         return cls(
-            kb_path=_configured_path("FINTRACE_KB_PATH", DEFAULT_KB_PATH),
+            kb_path=kb_path,
             bm25_index_path=_configured_path(
-                "FINTRACE_BM25_INDEX_PATH", DEFAULT_KB_PATH.parent / "bm25_index.sqlite"
+                "FINTRACE_BM25_INDEX_PATH", kb_path.parent / "bm25_index.sqlite"
             ),
             demo_mode=_env_bool("FINTRACE_DOCUMENT_SEARCH_DEMO_MODE", False),
             default_mode=os.getenv("FINTRACE_DOCUMENT_SEARCH_DEFAULT_MODE", "hybrid").strip().lower(),

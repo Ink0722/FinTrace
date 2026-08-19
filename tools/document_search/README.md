@@ -179,6 +179,8 @@ FINTRACE_DOCUMENT_SEARCH_EXACT_BATCH_SIZE=4096
 - `embeddings.npy`：归一化后的紧凑向量矩阵。
 - `vector.faiss`：无过滤全库检索索引。
 - `vector_ids.json`：紧凑向量行到 `chunk_id` 的映射。
+- `bm25_index.sqlite`：contentless FTS5 词法索引 + `chunk_meta` 过滤元数据（`python -m data_pipeline.documents.build_bm25_index` 离线构建，`bm25/hybrid` 模式必需）。
+- `bm25_manifest.json`：词法索引的 KB 指纹与分词器版本，失配时在线查询要求重建。
 - `manifest.json`：模型、维度、覆盖率和输入指纹。
 - `embedding_failures.jsonl`：未进入向量索引的 Chunk。
 

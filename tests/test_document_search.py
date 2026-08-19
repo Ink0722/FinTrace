@@ -10,6 +10,7 @@ import numpy as np
 
 from schemas.enums import ToolName
 from schemas.tool_calls import ToolCall
+from data_pipeline.documents.build_bm25_index import build_bm25_index
 from data_pipeline.documents.build_file_index import main as build_kb_main
 from tools.document_search.interface import document_search
 from tools.document_search.sample_data import load_sample_chunks
@@ -144,6 +145,7 @@ def test_build_kb_and_search_txt_document(monkeypatch) -> None:
     try:
         exit_code = build_kb_main(["--raw-dir", str(test_root / "raw_documents/test_company"), "--kb-dir", str(kb_dir)])
         assert exit_code == 0
+        build_bm25_index(kb_dir / "fintrace_kb.sqlite", kb_dir / "bm25_index.sqlite")
         monkeypatch.setenv("FINTRACE_KB_PATH", str(kb_dir / "fintrace_kb.sqlite"))
         result = document_search(
             ToolCall(
@@ -182,6 +184,7 @@ def test_section_aware_chunking_writes_parse_report(monkeypatch) -> None:
         report = json.loads((kb_dir / "parse_report.json").read_text(encoding="utf-8"))
         assert report["summary"]["document_count"] == 1
         assert report["documents"][0]["section_count"] == 1
+        build_bm25_index(kb_dir / "fintrace_kb.sqlite", kb_dir / "bm25_index.sqlite")
         monkeypatch.setenv("FINTRACE_KB_PATH", str(kb_dir / "fintrace_kb.sqlite"))
         result = document_search(
             ToolCall(
@@ -219,6 +222,7 @@ def test_docx_table_is_ingested_as_searchable_text(monkeypatch) -> None:
         assert exit_code == 0
         report = json.loads((kb_dir / "parse_report.json").read_text(encoding="utf-8"))
         assert report["summary"]["table_count"] == 1
+        build_bm25_index(kb_dir / "fintrace_kb.sqlite", kb_dir / "bm25_index.sqlite")
         monkeypatch.setenv("FINTRACE_KB_PATH", str(kb_dir / "fintrace_kb.sqlite"))
         result = document_search(
             ToolCall(

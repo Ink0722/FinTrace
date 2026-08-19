@@ -308,7 +308,7 @@ Planner 采用“按需调用、综合分析主动检查”的策略：普通指
 |---|---|---|
 | `financial_analysis` | 已支持 normalized 三表索引、`metric_query`、`metric_compare` 和行级证据；`risk_scan` 暂未实现 | `data/normalized/*.jsonl` / `data/indexes/financial_analysis/financial_metrics.sqlite` |
 | `ownership_analysis` | 已支持 normalized 股东快照索引、`holding_query`、`holding_compare`、有效快照选择、集中度和行级证据；`penetration` 暂未实现 | `data/normalized/shareholders.jsonl` / `data/indexes/ownership_analysis/ownership_holdings.sqlite` |
-| `document_search` | 已支持 SQLite 知识库优先检索；无知识库时回退样例 BM25 | `data/indexes/document_search/fintrace_kb.sqlite` / `tools/document_search/sample_data.py` |
+| `document_search` | 已支持 FTS5 词法索引 + FAISS 向量的混合检索；词法索引缺失/失配时返回建库命令；demo 模式回退样例 | `data/indexes/document_search/fintrace_kb.sqlite` + `bm25_index.sqlite` / `vector.faiss` |
 | `event_timeline` | 已支持 CSV 事件数据、时间过滤、事件聚类和证据绑定 | `data/events/events.csv` / `tools/event_timeline/sample_data.py` |
 
 ## Operation 功能说明
@@ -472,11 +472,29 @@ data/indexes/document_search/
   vector.faiss         # FAISS 向量索引
   vector_ids.json      # FAISS 行号到 chunk_id 的映射
   embeddings.npy       # 归一化后的原始向量矩阵
+  bm25_index.sqlite    # BM25 FTS5 词法索引（bm25/hybrid 模式必需）
+  bm25_manifest.json   # 词法索引的 KB 指纹与分词器版本
   build_progress.json  # 完成行数和 API 实际 Token
   batch_jobs.json      # Batch 任务 ID、文件 ID、状态和请求计数
   embedding_failures.jsonl # 被显式排除的 Chunk 和 API 错误，完整索引时为空
   manifest.json        # 输入哈希、模型、维度和构建结果
 ```
+
+### BM25 FTS5 词法索引
+
+关键词检索不在线重建词法索引。构建知识库后需要再执行一次离线索引构建：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_bm25_index
+```
+
+该命令从 `fintrace_kb.sqlite` 读取全部 Chunk，使用与在线完全相同的 bigram 分词器写入 contentless FTS5 表，并生成记录 KB 指纹和分词器版本的 `bm25_manifest.json`。真实语料约 16 万 Chunk，构建约 80 秒，索引约 209MB。环境变量：
+
+```text
+FINTRACE_BM25_INDEX_PATH=data/indexes/document_search/bm25_index.sqlite
+```
+
+在线的 `bm25/hybrid` 模式要求该索引存在且 manifest 与当前 KB 一致；缺失或失配时返回 `DATA_NOT_AVAILABLE` 并附建库命令。知识库重建后必须重新执行本命令。FTS5 排序参数为默认 `k1=1.2, b=0.75`；与旧内存 BM25 相比，全库查询 top-8 重合率约 91%，公司过滤查询约 76-90%（FTS5 使用全库 IDF，子集 IDF 噪声更大，差异集中在尾部排名）。全库关键词查询耗时从约 55 秒降至约 0.1 秒。
 
 Qwen/DashScope embedding 配置：
 
