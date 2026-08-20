@@ -12,30 +12,40 @@ from harness.llm import QwenClient
 LINE = "-" * 64
 
 TRACE_NODE_LABELS = {
-    "route": "意图识别",
-    "validate_plan": "计划校验",
-    "plan_error": "计划错误",
-    "execute_tools": "工具执行",
-    "validate_tool_results": "结果校验",
-    "retry_tools": "工具重试",
-    "tool_error": "工具错误",
-    "check_evidence": "证据检查",
-    "evidence_warning": "证据提醒",
+    "load_session": "会话加载",
+    "resolve_request": "请求解析",
+    "check_pre_answerability": "可回答性判断",
+    "build_clarification": "澄清追问",
+    "build_refusal": "能力边界拒绝",
+    "route_mode": "路径分流",
+    "plan_next_action": "下一步动作规划",
+    "validate_action": "动作校验",
+    "repair_action": "动作修复",
+    "execute_one_tool": "工具执行",
+    "validate_tool_result": "结果校验",
+    "merge_evidence": "证据合并",
+    "review_evidence": "证据充分性审查",
     "generate_answer": "答案生成",
+    "persist_session": "会话保存",
     "structured_error": "错误收束",
 }
 
 TRACE_NODE_DESCRIPTIONS = {
-    "route": "识别问题类型，判断需要调用哪些金融工具",
-    "validate_plan": "检查工具调用计划是否完整、参数是否合法",
-    "plan_error": "工具调用计划未通过校验，停止继续执行",
-    "execute_tools": "按计划调用财务、股权、文档或事件工具",
-    "validate_tool_results": "检查工具是否成功返回，并判断是否需要重试",
-    "retry_tools": "对可重试的工具失败执行一次重试",
-    "tool_error": "工具失败且无法继续重试，进入错误处理",
-    "check_evidence": "检查工具结果是否包含可追溯证据",
-    "evidence_warning": "证据存在缺口，后续回答必须提示限制",
+    "load_session": "恢复会话上下文，支持多轮指代继承",
+    "resolve_request": "解析实体、时间、任务族与约束（不选工具）",
+    "check_pre_answerability": "判断能力是否存在、必要参数是否完整",
+    "build_clarification": "缺少必要条件，向用户追问而不是猜测",
+    "build_refusal": "请求超出系统能力边界，明确拒绝",
+    "route_mode": "简单任务走确定性直连，复杂任务进入调查循环",
+    "plan_next_action": "复杂任务：每轮只规划一个最有价值的下一动作",
+    "validate_action": "校验动作合法性：工具、参数、预算、防重复",
+    "repair_action": "对可局部修复的非法动作做一次最小修复",
+    "execute_one_tool": "执行本轮唯一的工具调用，证据入账",
+    "validate_tool_result": "检查工具结果结构与状态",
+    "merge_evidence": "将本轮证据合并进统一证据账本",
+    "review_evidence": "判断证据是否充分、是否继续调查",
     "generate_answer": "调用 Qwen 生成基于证据的金融研判",
+    "persist_session": "保存会话上下文与结构化记忆",
     "structured_error": "返回结构化错误，避免在失败时编造答案",
 }
 
@@ -98,7 +108,7 @@ def format_final_answer(raw_answer: str) -> str:
         return raw_answer
 
     lines = [str(parsed.get("answer") or "")]
-    limitations = parsed.get("limitations") or []
+    limitations = parsed.get("limitations") or parsed.get("limitations_disclosed") or []
     if limitations:
         lines.append("")
         lines.append("限制说明：")
@@ -142,34 +152,44 @@ def format_trace_node(index: int, node: str, state: dict, debug_trace: bool = Fa
 
 
 def dynamic_trace_description(node: str, state: dict) -> str:
-    plan = state.get("execution_plan") or {}
-    tool_calls = plan.get("tool_calls", [])
+    tool_history = state.get("tool_call_history") or []
     tool_results = state.get("tool_results", [])
     errors = state.get("errors") or []
     warnings = state.get("warnings") or []
     evidence_count = len(state.get("evidence_ledger", []))
+    parsed = state.get("parsed_request") or {}
+    pre = state.get("pre_answerability") or {}
 
-    if node == "route":
-        intent = (state.get("user_request") or {}).get("intent") or "unknown"
-        return f"识别为 {intent}，生成 {len(tool_calls)} 个工具调用"
-    if node == "validate_plan":
-        return f"工具计划通过校验，共 {len(tool_calls)} 个工具调用" if tool_calls else "未生成工具调用计划"
-    if node == "execute_tools":
-        tool_names = [call.get("tool_name") for call in tool_calls if call.get("tool_name")]
-        return "调用 " + "、".join(tool_names) if tool_names else "没有可执行工具"
-    if node == "validate_tool_results":
+    if node == "resolve_request":
+        family = parsed.get("task_family") or "unknown"
+        entities = parsed.get("entities") or []
+        entity_text = "、".join(entities[:3]) if entities else "未识别到主体"
+        return f"任务族={family}，主体={entity_text}"
+    if node == "check_pre_answerability":
+        return f"判定为 {pre.get('status') or 'routeable'}：{pre.get('reason') or '可路由'}"
+    if node == "route_mode":
+        mode = state.get("routing_mode") or "direct"
+        return "确定性直连（无需 LLM 规划）" if mode == "direct" else "进入有界调查循环"
+    if node == "plan_next_action":
+        action = state.get("current_action") or {}
+        if action.get("action") == "finish":
+            return "调查队列完成，进入证据收束"
+        return f"下一动作：{action.get('tool_name')}.{action.get('operation')}（第 {state.get('step_count', 0)} 步）"
+    if node == "execute_one_tool":
+        tool_names = [entry.get("tool_name") for entry in tool_history if entry.get("tool_name")]
+        return "已调用 " + "、".join(tool_names) if tool_names else "没有可执行工具"
+    if node == "validate_tool_result":
         success_count = sum(1 for result in tool_results if result.get("status") == "success")
         failed_count = len(tool_results) - success_count
         if failed_count:
             return f"{success_count} 个工具成功，{failed_count} 个工具失败"
         return f"{success_count} 个工具均成功返回"
-    if node == "retry_tools":
-        retry_count = sum(1 for result in tool_results if result.get("retry_count", 0) > 0)
-        return f"已重试 {retry_count} 个可恢复失败的工具调用"
-    if node == "check_evidence":
-        return f"收集到 {evidence_count} 条证据，检查证据链是否充分"
-    if node == "evidence_warning":
-        return f"发现 {len(warnings)} 条证据限制，最终回答需要显式提示"
+    if node == "review_evidence":
+        gaps = state.get("evidence_gaps") or []
+        status = state.get("answer_status") or ""
+        if gaps:
+            return f"收集到 {evidence_count} 条证据，仍有 {len(gaps)} 个证据缺口（{status}）"
+        return f"收集到 {evidence_count} 条证据，证据链充分（{status}）"
     if node == "generate_answer":
         llm_status = state.get("llm_status")
         if llm_status == "success":
@@ -186,8 +206,10 @@ def dynamic_trace_description(node: str, state: dict) -> str:
 
 
 def trace_status_icon(node: str, state: dict) -> str:
-    if node in {"plan_error", "tool_error", "structured_error"}:
+    if node in {"build_refusal", "structured_error"}:
         return "❌"
+    if node == "build_clarification":
+        return "⚠️"
     if node in {"retry_tools", "evidence_warning"}:
         return "⚠️"
     if node == "generate_answer" and state.get("llm_status") == "failed":
@@ -199,14 +221,18 @@ def print_tool_trace(state: dict) -> None:
     print()
     print("🛠️ 工具调用")
     print(LINE)
-    plan = state.get("execution_plan") or {}
-    results_by_id = {result.get("tool_call_id"): result for result in state.get("tool_results", [])}
-    for call in plan.get("tool_calls", []):
-        result = results_by_id.get(call.get("tool_call_id"), {})
-        print(f"{call.get('tool_call_id')} {call.get('tool_name')}")
-        print(f"原因：{call.get('reason')}")
-        print(f"参数：{json.dumps(call.get('arguments') or {}, ensure_ascii=False)}")
-        print(f"状态：{result.get('status', 'unknown')}")
+    history = state.get("tool_call_history") or []
+    results_by_tool = state.get("tool_results", [])
+    if not history:
+        print("本轮未调用工具。")
+        print()
+        return
+    for index, entry in enumerate(history, start=1):
+        result = results_by_tool[index - 1] if index - 1 < len(results_by_tool) else {}
+        print(f"CALL-{index:03d} {entry.get('tool_name')}.{entry.get('operation')}")
+        print(f"原因：{entry.get('action_reason')}")
+        print(f"参数：{json.dumps(entry.get('arguments') or {}, ensure_ascii=False)}")
+        print(f"状态：{entry.get('status', 'unknown')}")
         summary = summarize_tool_result(result)
         if summary:
             print(f"摘要：{summary}")

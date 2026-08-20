@@ -23,9 +23,13 @@ def load_system_prompt() -> str:
 def generate_answer_with_status(state: AgentState) -> tuple[str, str, dict[str, Any] | None]:
     payload = {
         "user_query": state.user_request.raw_query,
-        "execution_plan": state.execution_plan.model_dump() if state.execution_plan else None,
+        "parsed_request": state.parsed_request.model_dump() if state.parsed_request else None,
+        "answer_status": state.answer_status,
+        "routing_mode": state.routing_mode,
+        "tool_calls": [entry.model_dump() for entry in state.tool_call_history],
         "tool_results": [result.model_dump() for result in state.tool_results],
         "evidence_ids": [evidence.evidence_id for evidence in state.evidence_ledger],
+        "evidence_gaps": [gap.model_dump() for gap in state.evidence_gaps],
         "warnings": state.warnings,
     }
     client = QwenClient()
@@ -109,11 +113,11 @@ def _structured_llm_error_text(state: AgentState, error: dict[str, Any]) -> str:
 
 def _completed_tool_summary_lines(state: AgentState) -> list[str]:
     lines: list[str] = []
-    if state.execution_plan and state.execution_plan.tool_calls:
+    if state.tool_call_history:
         lines.append("")
         lines.append("工具调用：")
-        for call in state.execution_plan.tool_calls:
-            lines.append(f"- {call.tool_call_id} {call.tool_name.value}")
+        for entry in state.tool_call_history:
+            lines.append(f"- {entry.tool_name}.{entry.operation} status={entry.status}")
 
     for result in state.tool_results:
         data = result.data

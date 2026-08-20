@@ -3,6 +3,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from schemas.evidence import Evidence
+from schemas.request import AgentAction, EvidenceGap, LlmCallRecord, ParsedRequest, PreAnswerability, ToolCallEntry
 from schemas.tool_calls import ExecutionPlan
 from schemas.tool_results import ToolResult
 
@@ -19,6 +20,8 @@ class CurrentContext(BaseModel):
     person_name: str | None = None
     report_periods: list[str] = Field(default_factory=list)
     focus_topics: list[str] = Field(default_factory=list)
+    active_topic: str | None = None
+    comparison_targets: list[str] = Field(default_factory=list)
 
 
 class UserRequest(BaseModel):
@@ -46,3 +49,29 @@ class AgentState(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     llm_status: str | None = None
     executed_nodes: list[str] = Field(default_factory=list)
+
+    # --- Gate A/B/C pipeline (docs/13 §22) ---
+    knowledge_cutoff: str | None = None
+    parsed_request: ParsedRequest | None = None
+    pre_answerability: PreAnswerability | None = None
+    routing_mode: str | None = None  # direct | investigation
+    candidate_capabilities: list[str] = Field(default_factory=list)
+
+    current_action: AgentAction | None = None
+    step_count: int = 0
+    max_steps: int = 5
+    total_tool_calls: int = 0
+    max_total_tool_calls: int = 6
+    tool_call_history: list[ToolCallEntry] = Field(default_factory=list)
+
+    evidence_gaps: list[EvidenceGap] = Field(default_factory=list)
+    evidence_sufficient: bool = False
+    review_status: str | None = None  # sufficient | continue | partial | insufficient
+    no_new_evidence_rounds: int = 0
+
+    repair_count: int = 0
+    failed_actions: list[dict[str, Any]] = Field(default_factory=list)
+    termination_reason: str | None = None
+    answer_status: str | None = None  # answered | partially_answered | clarification_required | unsupported | insufficient_evidence | failed
+
+    llm_calls: list[LlmCallRecord] = Field(default_factory=list)

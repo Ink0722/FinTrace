@@ -37,33 +37,46 @@ Last Update on Codex 2026/8/18
 
 ## Code Review 导览
 
-一次本地 CLI 问答的主调用链：
+在线 Agent 采用「确定性直连 + 有界 ReAct 调查」双模架构（见 `docs/13-Agent决策与证据驱动调查技术白皮书.md`）：
 
 ```text
 app.cli.main()
-→ print_answer()
 → harness.graph.workflow.run_agent()
 → LangGraph StateGraph
-   → route_node()
-      → harness.routing.router.route_query()
-      → harness.routing.planner.build_plan()
-      → 规则 planner 或 Qwen planner
-   → validate_plan_node()
-      → harness.guards.validation.validate_plan()
-   → execute_tools_node()
-      → tools.registry.execute_tool()
-      → document_search / financial_analysis / ownership_analysis / event_timeline
-      → harness.evidence.ledger.merge_evidence()
-   → validate_tool_results_node()
-      → harness.guards.validation.validate_tool_result()
-   → check_evidence_node()
-   → generate_answer_node()
-      → harness.answering.generate_answer_with_status()
-      → harness.llm.QwenClient.chat_json()
-   → structured_error_node() 或 END
-→ harness.tracing.jsonl.write_trace()
-→ CLI 格式化输出
+   → load_session           # 会话上下文恢复（指代继承）
+   → resolve_request        # Gate A：实体/时间/任务族解析（不选工具）
+   → check_pre_answerability# Gate B：unsupported / clarification_required / routeable
+      ├─ build_clarification → persist_session → END   # 缺槽追问，不猜
+      ├─ build_refusal      → persist_session → END    # 能力边界拒绝
+      └─ route_mode         # Gate C：简单直连 / 复杂调查
+         ├─ direct：build_direct_action（纯规则，无 LLM）
+         └─ investigation：plan_next_action（每轮一个 AgentAction）
+            → validate_action（→ repair_action 一次）
+            → execute_one_tool → validate_tool_result → merge_evidence
+            → review_evidence ─┬─ continue → plan_next_action（有界循环）
+                               └─ sufficient/partial/insufficient → generate_answer
+   → generate_answer_node()  # 基于证据的回答（answer_status 分级）
+   → persist_session → END
+→ harness.tracing.jsonl.write_trace()  # routing_mode/planner_actions/gaps/termination 全落盘
 ```
+
+关键模块：
+
+```text
+harness/routing/request_parser.py      # query → ParsedRequest（规则 → 02 LLM 兜底）
+harness/routing/entities.py            # 别名索引解析，禁止默认公司
+harness/routing/capability_registry.py # 能力注册表（implemented 反映真实代码）
+harness/routing/answerability.py       # Gate B 三态判定
+harness/routing/direct_gate.py         # Gate C 确定性直连
+harness/routing/planner.py             # 每轮一个动作的调查规划（P1 规则型）
+harness/routing/action_validator.py    # 动作校验：参数/维度/防篡改 cutoff/防重复
+harness/evidence/review.py             # 证据充分性（P1 确定性）
+harness/memory/session_store.py        # SQLite 会话持久化
+harness/prompts.py                     # Prompt 组装（全局政策 + Skill，带版本头）
+harness/skills.py                      # run_skill：结构化输出校验 + trace 记录
+```
+
+Prompt 体系（`prompts/`，版本化、按 docs/11 规范）：`01_global_policy` 为所有 LLM 节点共享前缀；`02_request_parser`（解析兜底）、`03_next_action_planner`（ReAct 单动作）、`04_evidence_reviewer`（证据充分性）、`05_action_repair`（动作最小修复）、`06_final_answer`（结构化最终回答）已全部接入，LLM 不可用时逐级降级到规则队列与结构化摘要。旧的 `system.md`/`planner.md` 已退役删除。
 
 FastAPI 模式只是在入口层替换为：
 
@@ -77,12 +90,12 @@ app.api.main.chat()
 
 ```text
 app/             CLI 和 FastAPI 入口
-harness/         Agent 编排、路由、校验、回答、trace
+harness/         Agent 编排、路由、校验、回答、记忆、trace
 tools/           四个可独立测试的金融工具
-schemas/         Pydantic 数据契约
-data_pipeline/   文档、事件、股权和财务离线预处理
+schemas/         Pydantic 数据契约（含 request.py 动作/审查契约）
+data_pipeline/   文档、事件、股权、财务和实体别名离线预处理
 data/            源数据、标准数据、处理结果和运行索引
-prompts/         system / planner prompt
+prompts/         版本化 Prompt Skills
 tests/           单元测试和工作流测试
 ```
 

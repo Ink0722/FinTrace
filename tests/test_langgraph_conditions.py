@@ -1,81 +1,71 @@
+from schemas.agent_state import AgentState
 from schemas.enums import ErrorType, ToolName, ToolStatus
-from schemas.tool_calls import ExecutionPlan, ToolCall
+from schemas.tool_calls import ToolCall
 from schemas.tool_results import ToolError, ToolResult
 from harness.graph.workflow import run_agent
-from harness.guards.validation import validate_plan
 
 
-def test_plan_invalid_routes_to_structured_error(monkeypatch) -> None:
-    def invalid_plan(query: str) -> ExecutionPlan:
-        call = ToolCall(
-            tool_call_id="CALL-001",
-            tool_name=ToolName.DOCUMENT_SEARCH,
-            arguments={"query": query},
-            reason="duplicate for test",
-        )
-        return ExecutionPlan(plan_id="PLAN-BAD", user_intent="document_search", tool_calls=[call, call])
-
-    monkeypatch.setattr("harness.graph.nodes.route_query", invalid_plan)
-    state = run_agent("test invalid plan", session_id="TEST-PLAN-INVALID")
-    assert state.workflow_status == "plan_invalid"
-    assert "PLAN_VALIDATION_FAILED" in state.final_answer
-    assert "execute_tools" not in state.executed_nodes
+def test_missing_company_clarifies_instead_of_guessing() -> None:
+    state = run_agent("净利润是多少", session_id="TEST-GATE-1")
+    assert state.answer_status == "clarification_required"
+    assert state.workflow_status == "clarification_required"
+    assert "上市公司" in state.final_answer
+    assert state.tool_call_history == []
+    assert "build_clarification" in state.executed_nodes
 
 
-def test_retryable_tool_failure_retries_once(monkeypatch) -> None:
-    calls = {"count": 0}
-
-    def flaky_tool(call: ToolCall) -> ToolResult:
-        calls["count"] += 1
-        if calls["count"] == 1:
-            return ToolResult(
-                tool_call_id=call.tool_call_id,
-                tool_name=call.tool_name,
-                status=ToolStatus.FAILED,
-                error=ToolError(
-                    error_type=ErrorType.TEMPORARY_DATABASE_ERROR,
-                    message="temporary failure",
-                    retryable=True,
-                ),
-            )
-        return ToolResult(tool_call_id=call.tool_call_id, tool_name=call.tool_name, status=ToolStatus.SUCCESS)
-
-    monkeypatch.setattr("harness.graph.nodes.execute_tool", flaky_tool)
-    state = run_agent("test retry", session_id="TEST-RETRY")
-    assert calls["count"] == 2
-    assert state.retry_count == 1
-    assert "retry_tools" in state.executed_nodes
-    assert state.tool_results[-1].status == ToolStatus.SUCCESS
+def test_realtime_request_refused() -> None:
+    state = run_agent("600519.SH 现在股价多少", session_id="TEST-GATE-2")
+    assert state.answer_status == "unsupported"
+    assert "行情" in state.final_answer
+    assert state.tool_call_history == []
 
 
-def test_evidence_insufficient_adds_warning(monkeypatch) -> None:
-    def empty_document_tool(call: ToolCall) -> ToolResult:
+def test_direct_path_skips_planner() -> None:
+    state = run_agent("600519.SH 2024年营业收入是多少", session_id="TEST-GATE-3")
+    assert state.routing_mode == "direct"
+    assert "plan_next_action" not in state.executed_nodes
+    assert state.total_tool_calls == 1
+
+
+def test_investigation_loop_respects_budget(monkeypatch) -> None:
+    def always_failing_tool(call: ToolCall) -> ToolResult:
         return ToolResult(
             tool_call_id=call.tool_call_id,
-            tool_name=ToolName.DOCUMENT_SEARCH,
-            status=ToolStatus.SUCCESS,
-            data={"hits": []},
+            tool_name=call.tool_name,
+            status=ToolStatus.FAILED,
+            error=ToolError(error_type=ErrorType.DATA_NOT_AVAILABLE, message="no data", retryable=False),
         )
 
-    monkeypatch.setattr("harness.graph.nodes.execute_tool", empty_document_tool)
-    state = run_agent("test evidence", session_id="TEST-EVIDENCE")
-    assert "evidence_warning" in state.executed_nodes
-    assert any("evidence_id" in warning or "document_search" in warning for warning in state.warnings)
+    monkeypatch.setattr("harness.graph.nodes.execute_tool", always_failing_tool)
+    state = run_agent("结合公告分析600519.SH的存货风险", session_id="TEST-GATE-4")
+    assert state.routing_mode == "investigation"
+    assert state.total_tool_calls <= state.max_total_tool_calls
+    assert state.step_count <= state.max_steps + 1
+    assert state.termination_reason in {"no_new_evidence", "budget_exhausted", None}
+    # Without a configured LLM the turn ends in the structured-error branch.
+    assert state.answer_status in {"insufficient_evidence", "failed"}
 
 
-def test_plan_validation_rejects_deprecated_scalar_collection_parameters() -> None:
-    plan = ExecutionPlan(
-        plan_id="PLAN-OLD-ARGS",
-        user_intent="financial_analysis",
-        tool_calls=[
-            ToolCall(
-                tool_call_id="CALL-001",
-                tool_name=ToolName.FINANCIAL_ANALYSIS,
-                arguments={"company_id": "000001.SZ", "report_period": "2022-12-31"},
-                reason="test deprecated arguments",
-            )
-        ],
+def test_pronoun_inherits_from_session_context() -> None:
+    first = run_agent("600519.SH 2024年营业收入是多少", session_id="TEST-GATE-5")
+    assert first.parsed_request is not None and first.parsed_request.entities == ["600519.SH"]
+    second = run_agent("这家公司十大股东是谁", session_id="TEST-GATE-5")
+    assert second.parsed_request is not None
+    assert second.parsed_request.entities == ["600519.SH"]
+    assert second.tool_call_history and second.tool_call_history[0].tool_name == "ownership_analysis"
+
+
+def test_state_supports_new_pipeline_fields() -> None:
+    state = AgentState.model_validate(
+        {
+            "session_id": "S",
+            "user_request": {"raw_query": "q"},
+            "routing_mode": "investigation",
+            "step_count": 2,
+            "max_steps": 5,
+            "answer_status": None,
+        }
     )
-    errors = validate_plan(plan)
-    assert "deprecated scalar parameter: financial_analysis.company_id" in errors
-    assert "deprecated scalar parameter: financial_analysis.report_period" in errors
+    assert state.routing_mode == "investigation"
+    assert state.step_count == 2

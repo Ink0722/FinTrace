@@ -1,197 +1,208 @@
-import json
-import os
-from pathlib import Path
-from typing import Any
+"""Next-action planner. Phase 1: deterministic queue derived from ParsedRequest.
 
-import requests
-from pydantic import ValidationError
+Phase 2 replaces the rule brain with the LLM skill (prompts/03_next_action_planner.md);
+the AgentAction contract and this module's public API stay unchanged.
+"""
+from __future__ import annotations
 
-from harness.llm import QwenClient
-from harness.routing.entities import (
-    extract_company_id,
-    extract_document_types,
-    extract_event_types,
-    extract_focus_topics,
-    extract_report_period,
-)
-from schemas.enums import ToolName
-from schemas.tool_calls import ExecutionPlan, ToolCall
+from schemas.agent_state import AgentState
+from schemas.request import AgentAction, ParsedRequest
+
+from harness.routing.direct_gate import DEFAULT_TOP_K, _compare_boundary
 
 
-KEYWORD_RULES: list[tuple[ToolName, tuple[str, ...]]] = [
-    (ToolName.OWNERSHIP_ANALYSIS, ("实控人", "股东", "持股", "穿透", "控制链", "控制", "十大", "减持", "增持")),
-    (ToolName.FINANCIAL_ANALYSIS, ("利润", "现金流", "存货", "应收", "毛利率", "偿债", "财务")),
-    (ToolName.DOCUMENT_SEARCH, ("问询函", "审计报告", "附注", "原文", "依据", "研报", "公告")),
-    (ToolName.EVENT_TIMELINE, ("时间线", "经过", "什么时候", "舆情", "事件", "后来", "处罚", "变更")),
-]
+def plan_next_action(state: AgentState) -> AgentAction:
+    """Emit exactly one action per call, skipping already-executed queue items."""
+    parsed = state.parsed_request
+    if parsed is None:
+        return AgentAction(action="finish", reason="缺少解析结果，终止调查。")
 
-COMPREHENSIVE_ANALYSIS_KEYWORDS = (
-    "综合分析",
-    "全面分析",
-    "尽调",
-    "风险画像",
-    "风险研判",
-    "投资风险",
-    "投资价值",
-)
-
-PLANNER_PROMPT_PATH = Path(__file__).resolve().parents[2] / "prompts" / "planner.md"
-
-
-def build_plan(query: str) -> ExecutionPlan:
-    """Build a tool plan with LLM planner first, deterministic rule planner as fallback."""
-    rule_plan = build_rule_plan(query)
-    llm_plan = build_llm_plan(query)
-    return llm_plan or rule_plan
-
-
-def build_rule_plan(query: str) -> ExecutionPlan:
-    selected = select_tools_by_rules(query)
-    common_args = build_common_arguments(query)
-    calls: list[ToolCall] = []
-    for index, tool_name in enumerate(selected, start=1):
-        calls.append(
-            ToolCall(
-                tool_call_id=f"CALL-{index:03d}",
-                tool_name=tool_name,
-                arguments=build_tool_arguments(tool_name, query, common_args),
-                reason=f"规则计划选择 {tool_name.value}",
-            )
-        )
-    return ExecutionPlan(plan_id="PLAN-001", user_intent=infer_intent(selected), tool_calls=calls)
-
-
-def build_llm_plan(query: str) -> ExecutionPlan | None:
-    """Ask Qwen for a candidate plan; invalid or unavailable planner output falls back to rules."""
-    client = build_planner_client()
-    if not client.enabled:
-        return None
-    try:
-        response = client.chat_json(
-            [
-                {"role": "system", "content": load_planner_prompt()},
-                {"role": "user", "content": json.dumps({"query": query, "rule_plan": build_rule_plan(query).model_dump()}, ensure_ascii=False)},
-            ],
-            temperature=0.0,
-        )
-        content = response["choices"][0]["message"]["content"]
-        payload = json.loads(content)
-        return normalize_llm_plan(query=query, payload=payload)
-    except (requests.RequestException, KeyError, IndexError, TypeError, json.JSONDecodeError, ValidationError, ValueError):
-        return None
-
-
-def load_planner_prompt() -> str:
-    try:
-        prompt = PLANNER_PROMPT_PATH.read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        raise RuntimeError(f"Planner prompt file is required: {PLANNER_PROMPT_PATH}") from exc
-    if not prompt:
-        raise RuntimeError(f"Planner prompt file is empty: {PLANNER_PROMPT_PATH}")
-    return prompt
-
-
-def build_planner_client() -> QwenClient:
-    api_key = os.getenv("QWEN_PLANNER_API_KEY") or os.getenv("DASHSCOPE_PLANNER_API_KEY")
-    base_url = os.getenv("QWEN_PLANNER_BASE_URL") or os.getenv("QWEN_BASE_URL")
-    model = os.getenv("QWEN_PLANNER_MODEL") or os.getenv("QWEN_ROUTER_MODEL")
-    return QwenClient(api_key=api_key or "", base_url=base_url, model=model or "qwen-plus")
-
-
-def normalize_llm_plan(query: str, payload: dict[str, Any]) -> ExecutionPlan:
-    common_args = build_common_arguments(query)
-    raw_calls = payload.get("tool_calls")
-    if not isinstance(raw_calls, list) or not raw_calls:
-        raise ValueError("LLM planner returned no tool_calls.")
-
-    calls: list[ToolCall] = []
-    seen: set[ToolName] = set()
-    for raw_call in raw_calls[:4]:
-        tool_name = ToolName(str(raw_call.get("tool_name")))
-        if tool_name in seen:
+    executed_keys = {(entry.tool_name, entry.operation) for entry in state.tool_call_history}
+    for action in _action_queue(parsed):
+        if action.action != "call_tool":
             continue
-        seen.add(tool_name)
-        arguments = build_tool_arguments(tool_name, query, common_args)
-        if isinstance(raw_call.get("arguments"), dict):
-            arguments.update({key: value for key, value in raw_call["arguments"].items() if value not in (None, "", [])})
-        calls.append(
-            ToolCall(
-                tool_call_id=f"CALL-{len(calls) + 1:03d}",
-                tool_name=tool_name,
-                arguments=arguments,
-                reason=str(raw_call.get("reason") or "LLM planner 选择工具"),
-            )
-        )
-    if not calls:
-        raise ValueError("LLM planner returned no valid tool calls.")
-    return ExecutionPlan(plan_id="PLAN-001", user_intent=str(payload.get("user_intent") or infer_intent([call.tool_name for call in calls])), tool_calls=calls)
+        key = (action.tool_name, action.operation)
+        if key in executed_keys and not _arguments_gain(action, state):
+            continue
+        return action
+    return AgentAction(action="finish", reason="规则调查队列已执行完毕。", expected_evidence=None)
 
 
-def select_tools_by_rules(query: str) -> list[ToolName]:
-    selected: list[ToolName] = []
-    if any(keyword in query for keyword in COMPREHENSIVE_ANALYSIS_KEYWORDS):
-        selected.extend([ToolName.FINANCIAL_ANALYSIS, ToolName.OWNERSHIP_ANALYSIS])
-    for tool_name, keywords in KEYWORD_RULES:
-        if tool_name not in selected and any(keyword in query for keyword in keywords):
-            selected.append(tool_name)
-    if not selected:
-        selected.append(ToolName.DOCUMENT_SEARCH)
-    return selected[:2]
+def _action_queue(parsed: ParsedRequest) -> list[AgentAction]:
+    queue: list[AgentAction] = []
+    family = parsed.task_family
+    entities = parsed.entities
+
+    if family in {"financial_investigation", "financial_metric_query", "financial_metric_compare", "unknown"}:
+        if entities and parsed.metrics and parsed.periods:
+            queue.append(_metric_query_action(parsed))
+        if entities and parsed.metrics and len(parsed.periods) >= 2 and len(entities) == 1:
+            queue.append(_metric_compare_action(parsed))
+        if entities:
+            queue.append(_document_action(parsed))
+            if parsed.document_types:
+                queue.append(_document_action(parsed, drop_type_filter=True))
+            queue.append(_event_action(parsed))
+        if not entities and parsed.people:
+            queue.append(_holder_reverse_action(parsed))
+        if not queue:
+            queue.append(_document_action(parsed))
+    elif family in {"ownership_snapshot", "ownership_compare", "ownership_penetration"}:
+        if entities or parsed.people:
+            queue.append(_holding_query_action(parsed))
+        if entities and len(entities) == 1:
+            start, end = _compare_boundary(parsed)
+            if start and end:
+                queue.append(_holding_compare_action(parsed, start, end))
+        queue.append(_document_action(parsed))
+    elif family == "event_investigation":
+        if entities:
+            queue.append(_event_action(parsed))
+        queue.append(_document_action(parsed))
+        if entities and parsed.metrics and parsed.periods:
+            queue.append(_metric_query_action(parsed))
+    elif family in {"event_query", "document_retrieval", "general_financial_explanation"}:
+        if entities and family == "event_query":
+            queue.append(_event_action(parsed))
+        if family != "event_query" or not entities:
+            queue.append(_document_action(parsed))
+        if entities and parsed.metrics and parsed.periods and family != "event_query":
+            queue.append(_metric_query_action(parsed))
+    return queue
 
 
-def build_common_arguments(query: str) -> dict[str, Any]:
-    args: dict[str, Any] = {"query": query, "company_ids": [extract_company_id(query)]}
-    report_period = extract_report_period(query)
-    if report_period:
-        args["report_periods"] = [report_period]
-    focus_topics = extract_focus_topics(query)
-    if focus_topics:
-        args["focus_topics"] = focus_topics
-    return args
+def _arguments_gain(action: AgentAction, state: AgentState) -> bool:
+    """A repeated call is allowed only when its arguments differ from every executed call."""
+    for entry in state.tool_call_history:
+        if entry.tool_name == action.tool_name and entry.operation == action.operation:
+            if entry.arguments == _canonical_args(action.arguments):
+                return False
+    return True
 
 
-def build_tool_arguments(tool_name: ToolName, query: str, common_args: dict[str, Any]) -> dict[str, Any]:
-    arguments: dict[str, Any] = {"query": query}
-    if tool_name == ToolName.DOCUMENT_SEARCH:
-        arguments["company_ids"] = common_args["company_ids"]
-        document_types = extract_document_types(query)
-        if document_types:
-            arguments["document_types"] = document_types
-        arguments.setdefault("top_k", 8)
-    elif tool_name == ToolName.EVENT_TIMELINE:
-        arguments["entity_ids"] = common_args["company_ids"]
-        event_types = extract_event_types(query)
-        if event_types:
-            arguments["event_types"] = event_types
-    elif tool_name == ToolName.OWNERSHIP_ANALYSIS:
-        arguments["operation"] = "holding_query"
-        arguments["company_ids"] = common_args["company_ids"]
-        arguments.setdefault("top_n", 10)
-    elif tool_name == ToolName.FINANCIAL_ANALYSIS:
-        arguments["operation"] = "metric_query"
-        arguments["company_ids"] = common_args["company_ids"]
-        arguments["metric_codes"] = infer_financial_metric_codes(query)
-        if common_args.get("report_periods"):
-            arguments["report_periods"] = common_args["report_periods"]
-    return arguments
+def _canonical_args(arguments: dict) -> dict:
+    # `operation` is injected at execution for financial/ownership tools; exclude it so
+    # LLM-proposed actions and recorded history fingerprints stay comparable.
+    return {key: value for key, value in arguments.items() if key not in {"query", "reason", "operation"}}
 
 
-def infer_intent(selected: list[ToolName]) -> str:
-    if len(selected) > 1:
-        return "multi_tool_analysis"
-    return selected[0].value
-
-
-def infer_financial_metric_codes(query: str) -> list[str]:
-    mappings = (
-        ("INVENTORY", ("存货", "库存")),
-        ("ACCOUNTS_RECEIVABLE", ("应收", "回款")),
-        ("OPERATING_CASHFLOW", ("经营现金流", "现金流")),
-        ("NET_PROFIT_PARENT", ("归母净利润", "净利润", "利润")),
-        ("REVENUE", ("营收", "营业收入", "收入")),
-        ("TOTAL_LIABILITIES", ("总负债", "负债")),
-        ("CURRENT_LIABILITIES", ("流动负债", "偿债")),
-        ("CURRENT_ASSETS", ("流动资产",)),
+def _metric_query_action(parsed: ParsedRequest) -> AgentAction:
+    return AgentAction(
+        action="call_tool",
+        capability="financial_metric_query",
+        tool_name="financial_analysis",
+        operation="metric_query",
+        arguments={
+            "query": parsed.raw_query,
+            "operation": "metric_query",
+            "company_ids": parsed.entities,
+            "metric_codes": parsed.metrics,
+            "report_periods": parsed.periods,
+        },
+        reason="优先获取结构化财务指标事实。",
+        expected_evidence="指标数值、口径与来源证据",
     )
-    selected = [code for code, keywords in mappings if any(keyword in query for keyword in keywords)]
-    return selected or ["REVENUE", "NET_PROFIT_PARENT", "OPERATING_CASHFLOW"]
+
+
+def _metric_compare_action(parsed: ParsedRequest) -> AgentAction:
+    return AgentAction(
+        action="call_tool",
+        capability="financial_metric_compare",
+        tool_name="financial_analysis",
+        operation="metric_compare",
+        arguments={
+            "query": parsed.raw_query,
+            "operation": "metric_compare",
+            "company_ids": parsed.entities,
+            "metric_codes": parsed.metrics,
+            "report_periods": parsed.periods,
+            "comparison_method": "both",
+        },
+        reason="对多期指标做确定性比较。",
+        expected_evidence="跨期序列与变化幅度",
+    )
+
+
+def _holding_query_action(parsed: ParsedRequest) -> AgentAction:
+    arguments: dict = {"query": parsed.raw_query, "operation": "holding_query", "top_n": 10}
+    if parsed.entities:
+        arguments["company_ids"] = parsed.entities
+    if parsed.people:
+        arguments["holder_ids"] = parsed.people
+    if parsed.as_of_dates:
+        arguments["as_of_date"] = parsed.as_of_dates[-1]
+    return AgentAction(
+        action="call_tool",
+        capability="ownership_snapshot",
+        tool_name="ownership_analysis",
+        operation="holding_query",
+        arguments=arguments,
+        reason="获取主要股东快照作为股权事实基础。",
+        expected_evidence="主要股东名单与持股比例",
+    )
+
+
+def _holding_compare_action(parsed: ParsedRequest, start: str, end: str) -> AgentAction:
+    return AgentAction(
+        action="call_tool",
+        capability="ownership_compare",
+        tool_name="ownership_analysis",
+        operation="holding_compare",
+        arguments={
+            "query": parsed.raw_query,
+            "operation": "holding_compare",
+            "company_ids": parsed.entities[:1],
+            "start_date": start,
+            "end_date": end,
+        },
+        reason="比较两个时点的股东变化。",
+        expected_evidence="股东进入、退出与增减持",
+    )
+
+
+def _holder_reverse_action(parsed: ParsedRequest) -> AgentAction:
+    return AgentAction(
+        action="call_tool",
+        capability="ownership_snapshot",
+        tool_name="ownership_analysis",
+        operation="holding_query",
+        arguments={"query": parsed.raw_query, "operation": "holding_query", "holder_ids": parsed.people, "top_n": 10},
+        reason="按股东反查其持股的公司。",
+        expected_evidence="股东出现的公司快照与持股比例",
+    )
+
+
+def _document_action(parsed: ParsedRequest, *, drop_type_filter: bool = False) -> AgentAction:
+    arguments: dict = {"query": parsed.raw_query, "top_k": DEFAULT_TOP_K}
+    if parsed.entities:
+        arguments["company_ids"] = parsed.entities
+    if parsed.document_types and not drop_type_filter:
+        arguments["document_types"] = parsed.document_types
+    return AgentAction(
+        action="call_tool",
+        capability="document_retrieval",
+        tool_name="document_search",
+        operation="search",
+        arguments=arguments,
+        reason="检索公告/研报文本证据补充解释。",
+        expected_evidence="与调查主题相关的原文 Chunk",
+    )
+
+
+def _event_action(parsed: ParsedRequest) -> AgentAction:
+    arguments: dict = {
+        "query": parsed.raw_query,
+        "scope": "entity",
+        "entity_ids": parsed.entities,
+    }
+    if parsed.event_types:
+        arguments["event_types"] = parsed.event_types
+    return AgentAction(
+        action="call_tool",
+        capability="event_query",
+        tool_name="event_timeline",
+        operation="event_query",
+        arguments=arguments,
+        reason="获取监管与风险事件时间线。",
+        expected_evidence="事件节点、类型与日期",
+    )

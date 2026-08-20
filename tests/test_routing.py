@@ -1,77 +1,124 @@
-from harness.routing.router import route_query
-from schemas.enums import ToolName
+from schemas.agent_state import CurrentContext
+from schemas.request import ParsedRequest
+
+from harness.routing.answerability import check_answerability, is_investigation
+from harness.routing.capability_registry import CAPABILITIES, candidate_capabilities, implemented_operations
+from harness.routing.direct_gate import build_direct_action
+from harness.routing.entities import extract_document_types
+from harness.routing.request_parser import parse_request
+from tools.entity_resolver import EntityResolver
+
+RESOLVER = EntityResolver()
 
 
-def test_financial_query_routes_to_financial_tool() -> None:
-    plan = route_query("分析一下这家公司的存货和现金流风险")
-    assert plan.tool_calls[0].tool_name == ToolName.FINANCIAL_ANALYSIS
+def test_parse_resolves_company_name_via_alias_index() -> None:
+    parsed = parse_request("中远海控2023年和2024年净利润变化多少", resolver=RESOLVER)
+    assert parsed.entities == ["601919.SH"]
+    assert parsed.task_family == "financial_metric_compare"
+    assert parsed.metrics == ["NET_PROFIT_PARENT"]
+    assert parsed.periods == ["2023-12-31", "2024-12-31"]
+    assert parsed.comparison_type == "cross_period"
+    assert not parsed.requires_investigation
 
 
-def test_ownership_query_routes_to_ownership_tool() -> None:
-    plan = route_query("张某通过哪些主体控制这家公司")
-    assert plan.tool_calls[0].tool_name == ToolName.OWNERSHIP_ANALYSIS
-    assert plan.tool_calls[0].arguments["operation"] == "holding_query"
+def test_parse_never_defaults_to_sample_company() -> None:
+    parsed = parse_request("净利润是多少", resolver=RESOLVER)
+    assert parsed.entities == []
+    assert "company_ids" in parsed.missing_slots
 
 
-def test_rule_planner_extracts_structured_arguments() -> None:
-    plan = route_query("分析000001.SZ在2022年的存货和现金流风险，并结合问询函")
-    tool_names = [call.tool_name for call in plan.tool_calls]
-    assert ToolName.FINANCIAL_ANALYSIS in tool_names
-    assert ToolName.DOCUMENT_SEARCH in tool_names
-    financial_call = next(call for call in plan.tool_calls if call.tool_name == ToolName.FINANCIAL_ANALYSIS)
-    document_call = next(call for call in plan.tool_calls if call.tool_name == ToolName.DOCUMENT_SEARCH)
-    assert financial_call.arguments["company_ids"] == ["000001.SZ"]
-    assert financial_call.arguments["report_periods"] == ["2022-12-31"]
-    assert financial_call.arguments["operation"] == "metric_query"
-    assert financial_call.arguments["metric_codes"] == ["INVENTORY", "OPERATING_CASHFLOW"]
-    assert document_call.arguments["document_types"] == ["inquiry_letter"]
+def test_parse_windcode_adjacent_to_chinese() -> None:
+    parsed = parse_request("600519.SH的存货是多少", resolver=RESOLVER)
+    assert parsed.entities == ["600519.SH"]
+    assert parsed.metrics == ["INVENTORY"]
 
 
-def test_comprehensive_analysis_proactively_routes_financial_and_ownership_tools() -> None:
-    plan = route_query("请对000001.SZ做一次综合分析")
-    tool_names = [call.tool_name for call in plan.tool_calls]
-    assert tool_names == [ToolName.FINANCIAL_ANALYSIS, ToolName.OWNERSHIP_ANALYSIS]
+def test_parse_quarter_and_half_year_periods() -> None:
+    parsed = parse_request("600519.SH 2024年一季度存货和2024年半年报存货", resolver=RESOLVER)
+    assert parsed.periods == ["2024-03-31", "2024-06-30"]
 
 
-def test_llm_planner_uses_separate_model_env(monkeypatch) -> None:
-    from harness.routing import planner
+def test_parse_flags_investigation_and_explanation() -> None:
+    parsed = parse_request("结合公告分析600519.SH的存货风险", resolver=RESOLVER)
+    assert parsed.requires_investigation
+    assert parsed.task_family in {"financial_metric_query", "financial_investigation"}
 
-    created_clients = []
 
-    class FakeClient:
-        def __init__(self, api_key=None, base_url=None, model=None):
-            self.api_key = api_key
-            self.base_url = base_url
-            self.model = model
-            created_clients.append(self)
+def test_parse_realtime_and_prediction_families() -> None:
+    assert parse_request("股价现在多少", resolver=RESOLVER).requires_realtime
+    assert parse_request("明年会涨吗", resolver=RESOLVER).requires_prediction
 
-        @property
-        def enabled(self):
-            return True
 
-        def chat_json(self, messages, temperature=0.0):
-            return {
-                "choices": [
-                    {
-                        "message": {
-                            "content": (
-                                '{"user_intent":"financial_document_analysis",'
-                                '"tool_calls":[{"tool_name":"document_search","arguments":{"top_k":3},"reason":"LLM planner"}]}'
-                            )
-                        }
-                    }
-                ]
-            }
+def test_document_types_use_kb_vocabulary() -> None:
+    assert extract_document_types("监管问询函有没有关注存货跌价准备") == ["announcement"]
+    assert extract_document_types("研报怎么看盈利预测") == ["research_report"]
+    parsed = parse_request("查600519.SH关于存货的年报内容", resolver=RESOLVER)
+    assert parsed.document_types == ["announcement"]
 
-    monkeypatch.setenv("QWEN_API_KEY", "answer-key")
-    monkeypatch.setenv("QWEN_MODEL", "answer-model")
-    monkeypatch.setenv("QWEN_PLANNER_API_KEY", "planner-key")
-    monkeypatch.setenv("QWEN_PLANNER_MODEL", "planner-model")
-    monkeypatch.setattr(planner, "QwenClient", FakeClient)
 
-    plan = planner.build_plan("查一下问询函")
+def test_answerability_unsupported_realtime() -> None:
+    parsed = parse_request("600519.SH 股价多少", resolver=RESOLVER)
+    pre = check_answerability(parsed)
+    assert pre.status == "unsupported"
 
-    assert created_clients[0].api_key == "planner-key"
-    assert created_clients[0].model == "planner-model"
-    assert plan.tool_calls[0].tool_name == ToolName.DOCUMENT_SEARCH
-    assert plan.tool_calls[0].arguments["top_k"] == 3
+
+def test_answerability_clarifies_missing_slots() -> None:
+    parsed = parse_request("净利润是多少", resolver=RESOLVER)
+    pre = check_answerability(parsed)
+    assert pre.status == "clarification_required"
+    assert "company_ids" in pre.missing_slots
+    assert pre.clarification_question
+
+
+def test_answerability_routeable_complete_request() -> None:
+    parsed = parse_request("600519.SH 2024年营业收入是多少", resolver=RESOLVER)
+    pre = check_answerability(parsed)
+    assert pre.status == "routeable"
+
+
+def test_investigation_requests_skip_hard_slot_requirements() -> None:
+    parsed = parse_request("结合公告分析600519.SH的存货风险", resolver=RESOLVER)
+    assert parsed.requires_investigation
+    assert check_answerability(parsed).status == "routeable"
+    assert is_investigation(parsed)
+
+
+def test_direct_gate_builds_unique_metric_query() -> None:
+    parsed = parse_request("600519.SH 2024年营业收入是多少", resolver=RESOLVER)
+    action = build_direct_action(parsed)
+    assert action is not None and action.action == "call_tool"
+    assert action.tool_name == "financial_analysis"
+    assert action.arguments["company_ids"] == ["600519.SH"]
+    assert action.arguments["operation"] == "metric_query"
+
+
+def test_direct_gate_defers_ambiguous_comparison() -> None:
+    parsed = ParsedRequest(
+        raw_query="比较甲乙公司2023和2024年净利润",
+        entities=["600519.SH", "601919.SH"],
+        periods=["2023-12-31", "2024-12-31"],
+        metrics=["NET_PROFIT_PARENT"],
+        task_family="financial_metric_compare",
+    )
+    assert build_direct_action(parsed) is None
+    assert is_investigation(parsed) is False  # single capability, complete slots -> Gate C says direct-capable but ambiguous dimension defers
+
+
+def test_direct_gate_ownership_snapshot() -> None:
+    parsed = parse_request("600519.SH十大股东是谁", resolver=RESOLVER)
+    action = build_direct_action(parsed)
+    assert action is not None
+    assert action.tool_name == "ownership_analysis"
+    assert action.arguments["company_ids"] == ["600519.SH"]
+
+
+def test_capability_registry_reflects_real_implementation() -> None:
+    assert CAPABILITIES["financial_risk_scan"].implemented is False
+    assert CAPABILITIES["ownership_penetration"].implemented is False
+    assert ("financial_analysis", "metric_query") in implemented_operations()
+    assert candidate_capabilities("financial_investigation") == [
+        "financial_metric_query",
+        "financial_metric_compare",
+        "document_retrieval",
+        "event_query",
+    ]

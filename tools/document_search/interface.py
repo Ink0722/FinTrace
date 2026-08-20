@@ -114,6 +114,16 @@ def document_search(call: ToolCall) -> ToolResult:
     chunks: list = []
 
     if knowledge_base_available(kb_path):
+        allowed_types = _kb_document_types(kb_path)
+        invalid_types = sorted(set(arguments.document_types or []) - allowed_types)
+        if allowed_types and invalid_types:
+            return _error_result(
+                call,
+                started,
+                ErrorType.INVALID_ARGUMENT,
+                f"document_types must be one of {sorted(allowed_types)}, got {invalid_types}",
+                details={"document_types": arguments.document_types},
+            )
         if arguments.mode in {"bm25", "hybrid"}:
             if not bm25_index_available(config.bm25_index_path):
                 return _error_result(
@@ -321,6 +331,18 @@ def document_search(call: ToolCall) -> ToolResult:
 
 def _company_id(arguments: DocumentSearchArguments) -> str | None:
     return arguments.company_ids[0] if arguments.company_ids else None
+
+
+def _kb_document_types(kb_path) -> set[str]:
+    """The vocabulary is data-driven: upload KBs derive types from filenames."""
+    import sqlite3 as _sqlite3
+
+    try:
+        with _sqlite3.connect(kb_path) as connection:
+            rows = connection.execute("SELECT DISTINCT document_type FROM chunks").fetchall()
+    except sqlite3.Error:
+        return set()
+    return {str(row[0]) for row in rows if row[0]}
 
 
 def _has_metadata_filter(arguments: DocumentSearchArguments) -> bool:

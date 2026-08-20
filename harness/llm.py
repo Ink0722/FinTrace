@@ -32,6 +32,7 @@ class QwenClient:
                 "content": "Qwen API key is not configured. Deterministic fallback was used.",
             }
 
+        messages = self._ensure_json_keyword(messages)
         response = requests.post(
             f"{self.base_url}/chat/completions",
             headers={
@@ -48,3 +49,15 @@ class QwenClient:
         )
         response.raise_for_status()
         return response.json()
+
+    @staticmethod
+    def _ensure_json_keyword(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+        """DashScope requires the word 'json' in messages when response_format=json_object."""
+        if any("json" in str(message.get("content", "")).lower() for message in messages):
+            return messages
+        patched = [dict(message) for message in messages]
+        for message in reversed(patched):
+            if message.get("role") in {"system", "user"}:
+                message["content"] = f"{message['content']}\n请以 JSON 格式返回结果。"
+                break
+        return patched

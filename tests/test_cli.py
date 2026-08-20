@@ -31,7 +31,7 @@ def test_cli_trace_outputs_execution_path_tool_calls_and_evidence(capsys) -> Non
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "可审计推理路径" in captured.out
-    assert "意图识别" in captured.out
+    assert "请求解析" in captured.out
     assert "✅" in captured.out
     assert "工具调用" in captured.out
     assert "证据" in captured.out
@@ -41,7 +41,7 @@ def test_cli_debug_trace_outputs_raw_node_names(capsys) -> None:
     exit_code = main(["监管问询函有没有关注存货跌价准备", "--trace", "--debug-trace"])
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "node: route" in captured.out
+    assert "node: resolve_request" in captured.out
 
 
 def test_cli_api_mode_uses_http(monkeypatch, capsys) -> None:
@@ -56,6 +56,16 @@ def test_cli_api_mode_uses_http(monkeypatch, capsys) -> None:
             return json.dumps(
                 {
                     "final_answer": json.dumps({"answer": "API answer", "limitations": ["API limitation"]}, ensure_ascii=False),
+                    "tool_call_history": [
+                        {
+                            "tool_name": "document_search",
+                            "operation": "search",
+                            "arguments": {"query": "问题"},
+                            "status": "success",
+                            "evidence_ids": ["EVID-001"],
+                            "action_reason": "test",
+                        }
+                    ],
                     "execution_plan": {
                         "tool_calls": [
                             {
