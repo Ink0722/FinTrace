@@ -2,7 +2,7 @@
 from schemas.agent_state import AgentState, CurrentContext, Message, UserRequest
 from schemas.enums import ToolName, ToolStatus
 from schemas.evidence import Evidence
-from schemas.request import AgentAction, ParsedRequest
+from schemas.request import AgentAction, ParsedRequest, ToolCallEntry
 from schemas.tool_results import ToolResult
 from tools.entity_resolver import EntityResolver
 
@@ -120,6 +120,48 @@ def test_validate_action_normalizes_company_names() -> None:
     errors = validate_action(action, state, resolver=EntityResolver())
     assert errors == []
     assert action.arguments["company_ids"] == ["601919.SH"]
+
+
+def test_document_queries_use_query_in_duplicate_fingerprint() -> None:
+    state = make_state()
+    state.tool_call_history = [
+        ToolCallEntry(
+            tool_name="document_search",
+            operation="search",
+            arguments={"query": "inventory impairment"},
+            status="failed",
+        )
+    ]
+    changed = AgentAction(
+        action="call_tool",
+        capability="document_retrieval",
+        tool_name="document_search",
+        operation="search",
+        arguments={"query": "inventory composition"},
+    )
+    duplicate = changed.model_copy(update={"arguments": {"query": "  INVENTORY   IMPAIRMENT "}})
+    assert validate_action(changed, state, resolver=EntityResolver()) == []
+    assert any("duplicate tool call" in error for error in validate_action(duplicate, state, resolver=EntityResolver()))
+
+
+def test_document_action_inherits_resolved_filters() -> None:
+    parsed = ParsedRequest(
+        raw_query="search announcement",
+        entities=["600519.SH"],
+        document_types=["announcement"],
+        task_family="document_retrieval",
+    )
+    state = make_state(parsed)
+    action = AgentAction(
+        action="call_tool",
+        capability="document_retrieval",
+        tool_name="document_search",
+        operation="search",
+        arguments={"query": "inventory"},
+    )
+    assert validate_action(action, state, resolver=EntityResolver()) == []
+    assert action.arguments["company_ids"] == ["600519.SH"]
+    assert action.arguments["document_types"] == ["announcement"]
 
 
 # --- evidence review ---

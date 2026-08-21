@@ -274,7 +274,7 @@ QWEN_PLANNER_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_PLANNER_MODEL=qwen-plus
 ```
 
-如果 `QWEN_PLANNER_API_KEY` / `DASHSCOPE_PLANNER_API_KEY` 未配置，系统会自动使用规则 planner；这不会影响最终回答模型的 `QWEN_API_KEY` / `QWEN_MODEL` 配置。
+`request_parser`、`next_action_planner`、`evidence_reviewer` 和 `action_repair` 使用 `QWEN_PLANNER_*` 配置；`final_answer` 使用主模型的 `QWEN_*` 配置。Planner Key 未配置时会回退到主模型 Key，Planner 模型未配置时会回退到主模型名称；只有模型调用失败或输出未通过 Schema 校验时，调查节点才使用规则队列降级。两组配置可以暂时填写同一模型，也可以日后独立切换。
 
 没有配置 API Key 时，系统不会生成确定性模板回答，而是明确返回 `LLM_NOT_CONFIGURED` 警告，避免把非模型输出伪装成正常研判。
 
@@ -330,7 +330,7 @@ Planner 通过 `operation` 指定工具本次需要完成的具体任务。每�
 
 | 工具 | Operation | 功能说明 | 典型问题 |
 |---|---|---|---|
-| `document_search` | `search` | 在公告正文和研报摘要中执行关键词或语义检索，并按公司、文档类型、日期和发布机构过滤结果；返回可追溯的 Chunk 及其来源信息。 | “贵州茅台的研报如何评价其盈利能力？”“公告中如何描述本次违规事项？” |
+| `document_search` | `search` | 在公告正文和研报摘要中执行关键词或语义检索，并按公司、文档类型和发布日期过滤结果；工作流注入 `knowledge_cutoff` 防止召回截止日之后披露的材料，返回可追溯的 Chunk 及其来源信息。 | “贵州茅台的研报如何评价其盈利能力？”“公告中如何描述本次违规事项？” |
 | `financial_analysis` | `metric_query` | 查询一个或多个公司在指定报告期的原始财务指标或确定性派生指标，保留数值、单位、报表口径和来源。 | “查询公司 2024 年营业收入和净利润。” |
 | `financial_analysis` | `metric_compare` | 对同口径指标进行确定性计算：单公司加多个期间时返回有序序列、相邻期间变化和首尾累计变化，多公司加单一期间时返回各公司数值及差异；工具不生成趋势性语言结论。 | “分析公司近五年的经营现金流趋势。”“比较甲公司和乙公司 2024 年的资产负债率。” |
 | `financial_analysis` | `risk_scan` | 暂未实现；当前调用返回 `UNSUPPORTED_QUERY`，不会运行旧规则或生成风险评分。 | “扫描公司近三年的财务异常风险。” |
@@ -341,6 +341,8 @@ Planner 通过 `operation` 指定工具本次需要完成的具体任务。每�
 | `event_timeline` | `event_cluster` | 根据事件类型、时间接近程度和实体重合度聚合相关事件，输出事件簇及聚合依据；只表达相关性和时序，不自动认定因果关系。 | “把同一轮违规调查及后续处罚聚合为一个事件簇。” |
 
 选择原则：查原文使用 `search`；只查询财务数值使用 `metric_query`；需要计算跨期变化、连续多期序列或跨公司差异时使用 `metric_compare`。当前不得规划 `risk_scan`。`metric_compare` 不支持“多个公司与多个期间”同时比较，因为这种输入无法唯一确定比较维度。工具负责数值排序和计算，Agent LLM 负责根据工具结果说明上升、下降、增速变化或拐点，不得自行补充数值。持股事实、反向持股查询和集中度统一使用 `holding_query`，股东变化使用 `holding_compare`，多层路径使用 `penetration`。查找、过滤和排序事件统一使用 `event_query`，Agent 根据返回节点组织时间线；需要将相关节点归并为事件簇时使用 `event_cluster`。
+
+文档调查会继承请求解析阶段唯一确定的公司和文档类型过滤条件，避免 Planner 漏填参数后执行无关的全库检索。同一轮最多进行一次初始检索和一次 Query 改写；之后仍未覆盖的证据缺口进入 Limitations，不继续消耗调查预算。
 
 ## 比赛文本 Document
 

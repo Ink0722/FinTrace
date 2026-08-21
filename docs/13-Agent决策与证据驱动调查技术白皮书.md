@@ -303,6 +303,8 @@ Regex + 中文时间规则 + knowledge_cutoff
 
 相对时间如“今天、当前、最新、去年”必须基于工作流注入的 `knowledge_cutoff` 和当前数据覆盖转换，不允许 Planner 自己生成或修改截止日期。
 
+`knowledge_cutoff` 只注入 Capability Registry 中声明支持该约束的工具。文档检索将它解释为最晚披露日期，并使用 `min(end_date, knowledge_cutoff)` 作为实际检索上界；因此用户给出的查询区间不能绕过系统截止日。财务与股东工具继续按各自的披露日期执行防前视选择。
+
 必须持续区分：
 
 - `report_periods`：财务数据归属期间；

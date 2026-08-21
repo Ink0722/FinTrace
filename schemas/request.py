@@ -128,6 +128,7 @@ class CapabilityDescriptor(BaseModel):
     tool: str | None = None
     operation: str | None = None
     required_slots: list[str] = Field(default_factory=list)
+    supports_knowledge_cutoff: bool = False
     description: str = ""
 
 

@@ -42,6 +42,7 @@ class DocumentSearchArguments(BaseModel):
     document_types: list[str] | None = None
     start_date: date | None = None
     end_date: date | None = None
+    knowledge_cutoff: date | None = None
     top_k: int = Field(default=8, ge=1)
     pool_k: int | None = Field(default=None, ge=1)
     mode: Literal["bm25", "vector", "hybrid"] = "hybrid"
@@ -74,9 +75,15 @@ class DocumentSearchArguments(BaseModel):
 
     @model_validator(mode="after")
     def validate_dates(self) -> "DocumentSearchArguments":
-        if self.start_date and self.end_date and self.start_date > self.end_date:
-            raise ValueError("start_date must not be later than end_date")
+        effective_end_date = self.effective_end_date
+        if self.start_date and effective_end_date and self.start_date > effective_end_date:
+            raise ValueError("start_date must not be later than the effective end date")
         return self
+
+    @property
+    def effective_end_date(self) -> date | None:
+        candidates = [value for value in (self.end_date, self.knowledge_cutoff) if value is not None]
+        return min(candidates) if candidates else None
 
 
 def document_search(call: ToolCall) -> ToolResult:
@@ -87,6 +94,7 @@ def document_search(call: ToolCall) -> ToolResult:
         raw_arguments.setdefault("mode", config.default_mode)
         raw_arguments.setdefault("top_k", config.default_top_k)
         arguments = DocumentSearchArguments.model_validate(raw_arguments)
+        effective_end_date = arguments.effective_end_date
         pool_k = arguments.pool_k or max(arguments.top_k * 5, 50)
         if arguments.top_k > config.max_top_k:
             raise ValueError(f"top_k must be <= {config.max_top_k}")
@@ -153,7 +161,7 @@ def document_search(call: ToolCall) -> ToolResult:
                     company_id=_company_id(arguments),
                     document_types=arguments.document_types,
                     start_date=arguments.start_date,
-                    end_date=arguments.end_date,
+                    end_date=effective_end_date,
                     kb_path=kb_path,
                 )
             metadata_time_ms = _elapsed_ms(metadata_started)
@@ -172,7 +180,7 @@ def document_search(call: ToolCall) -> ToolResult:
             company_id=_company_id(arguments),
             document_types=arguments.document_types,
             start_date=arguments.start_date,
-            end_date=arguments.end_date,
+            end_date=effective_end_date,
         )
         allowed_chunk_ids = None
         warnings.append("Demo mode is enabled; results come from built-in sample chunks.")
@@ -198,7 +206,7 @@ def document_search(call: ToolCall) -> ToolResult:
                 company_id=_company_id(arguments),
                 document_types=arguments.document_types,
                 start_date=arguments.start_date,
-                end_date=arguments.end_date,
+                end_date=effective_end_date,
             )
         except (OSError, sqlite3.Error, ValueError) as exc:
             return _error_result(
@@ -293,6 +301,8 @@ def document_search(call: ToolCall) -> ToolResult:
             "pool_k": pool_k,
             "mode": arguments.mode,
             "source": source,
+            "knowledge_cutoff": arguments.knowledge_cutoff.isoformat() if arguments.knowledge_cutoff else None,
+            "effective_end_date": effective_end_date.isoformat() if effective_end_date else None,
             "hits": [hit.model_dump() for hit in hits],
             "retrieval_debug": {
                 "mode": arguments.mode,
@@ -351,6 +361,7 @@ def _has_metadata_filter(arguments: DocumentSearchArguments) -> bool:
         or arguments.document_types
         or arguments.start_date
         or arguments.end_date
+        or arguments.knowledge_cutoff
     )
 
 

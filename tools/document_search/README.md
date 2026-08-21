@@ -19,11 +19,16 @@ tools.document_search.interface.document_search(call: ToolCall) -> ToolResult
 | `document_types` | `list[str]` | 不限制 | 当前正式语料包括 `announcement`、`research_report` |
 | `start_date` | `YYYY-MM-DD` | 不限制 | 发布日期下界 |
 | `end_date` | `YYYY-MM-DD` | 不限制 | 发布日期上界，不能早于 `start_date` |
+| `knowledge_cutoff` | `YYYY-MM-DD` | 不限制 | 系统允许使用的信息最晚披露日，由工作流注入，Planner 不得生成或修改 |
 | `top_k` | `int` | `8` | 最终返回数量 |
 | `pool_k` | `int` | `max(top_k * 5, 50)` | BM25 和向量候选池大小 |
 | `mode` | `bm25/vector/hybrid` | `hybrid` | 检索模式 |
 
 多公司、空问题、非法日期、未知参数以及超出配置上限的 `top_k/pool_k` 返回 `INVALID_ARGUMENT`。
+
+实际检索上界为 `effective_end_date = min(end_date, knowledge_cutoff)`；任一参数缺失时使用另一项，两者都缺失时不设置上界。所有日期过滤均比较 Chunk 的 `publish_date`。如果 `start_date` 晚于有效结束日期，工具返回 `INVALID_ARGUMENT`。返回数据同时回显 `knowledge_cutoff` 和 `effective_end_date`，用于审计防前视约束。
+
+Agent 调用时，如果请求解析阶段已经唯一确定公司或文档类型，而 Planner 未显式填写相应过滤条件，Action Validator 会确定性补入 `company_ids` 和 `document_types`，避免退化为无关的全库搜索。同一轮调查最多执行两次文档检索，即一次初始查询和一次实质不同的 Query 改写；仍有缺口时以限制说明收束。
 
 ## 在线工作流
 
@@ -33,7 +38,8 @@ document_search(call)
 → 检查 SQLite 知识库
    ├ 不存在且 Demo 关闭 → DATA_NOT_AVAILABLE
    └ 不存在且 Demo 开启 → 显式使用内置样例
-→ 根据公司、文档类型和日期确定候选 Chunk
+→ 合并 end_date 与 knowledge_cutoff，得到有效披露截止日
+→ 根据公司、文档类型和发布日期确定候选 Chunk
 → BM25 分支：中文双字 token 召回
 → Vector 分支：Qwen 生成查询向量
    ├ 有元数据过滤 → 在过滤后的向量子集上精确余弦搜索

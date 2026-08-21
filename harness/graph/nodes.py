@@ -16,7 +16,7 @@ from harness.memory.session_store import SessionStore
 from harness.runtime_context import final_answer_runtime, planner_runtime, repair_runtime, reviewer_runtime
 from harness.routing.action_validator import repair_action, validate_action
 from harness.routing.answerability import check_answerability, is_investigation
-from harness.routing.capability_registry import candidate_capabilities
+from harness.routing.capability_registry import candidate_capabilities, get_capability
 from harness.routing.direct_gate import build_direct_action
 from harness.routing.planner import plan_next_action
 from harness.routing.request_parser import parse_request
@@ -263,7 +263,8 @@ def execute_one_tool_node(state: AgentState) -> AgentState:
     # financial/ownership tools require `operation` in arguments; document/event forbid it.
     if action.tool_name in {"financial_analysis", "ownership_analysis"} and action.operation:
         arguments.setdefault("operation", action.operation)
-    if state.knowledge_cutoff:
+    capability = get_capability(action.capability or "")
+    if state.knowledge_cutoff and capability and capability.supports_knowledge_cutoff:
         arguments.setdefault("knowledge_cutoff", state.knowledge_cutoff)
     call = ToolCall(
         tool_call_id=f"CALL-{state.total_tool_calls + 1:03d}",
@@ -280,7 +281,7 @@ def execute_one_tool_node(state: AgentState) -> AgentState:
         ToolCallEntry(
             tool_name=call.tool_name.value,
             operation=action.operation,
-            arguments={key: value for key, value in arguments.items() if key not in {"query", "knowledge_cutoff"}},
+            arguments={key: value for key, value in arguments.items() if key not in {"knowledge_cutoff"}},
             status=result.status.value,
             evidence_ids=[item.evidence_id for item in result.evidence],
             action_reason=action.reason or "",
@@ -338,10 +339,26 @@ def review_evidence_node(state: AgentState) -> AgentState:
     state.evidence_sufficient = review.status == "sufficient"
     state.review_status = review.status
     action = state.current_action
+    latest_result = state.tool_results[-1] if state.tool_results else None
+    non_retryable_failure = bool(
+        latest_result
+        and latest_result.status.value != "success"
+        and latest_result.error
+        and not latest_result.error.retryable
+    )
+    document_searches = sum(
+        1 for entry in state.tool_call_history if entry.tool_name == "document_search" and entry.operation == "search"
+    )
     if state.routing_mode == "direct":
         state.next_action = "answer"
     elif action is not None and action.action == "finish":
         state.termination_reason = state.termination_reason or "planner_finish"
+        state.next_action = "answer"
+    elif non_retryable_failure:
+        state.termination_reason = state.termination_reason or "non_retryable_tool_failure"
+        state.next_action = "answer"
+    elif document_searches >= 2:
+        state.termination_reason = state.termination_reason or "document_search_budget_exhausted"
         state.next_action = "answer"
     elif llm_decided and review.status in {"sufficient", "partial", "insufficient"}:
         state.next_action = "answer"

@@ -12,7 +12,7 @@ from schemas.enums import ToolName
 from schemas.tool_calls import ToolCall
 from data_pipeline.documents.build_bm25_index import build_bm25_index
 from data_pipeline.documents.build_file_index import main as build_kb_main
-from tools.document_search.interface import document_search
+from tools.document_search.interface import DocumentSearchArguments, document_search
 from tools.document_search.sample_data import load_sample_chunks
 from tools.document_search.search import bm25_search, filter_chunks
 from tools.document_search.vector_search import clear_vector_cache
@@ -74,6 +74,28 @@ def test_document_search_rejects_invalid_arguments(monkeypatch) -> None:
     assert result.status.value == "failed"
     assert result.error is not None
     assert result.error.error_type.value == "INVALID_ARGUMENT"
+
+
+def test_document_search_cutoff_caps_end_date() -> None:
+    arguments = DocumentSearchArguments(
+        query="inventory",
+        start_date=date(2023, 1, 1),
+        end_date=date(2025, 12, 31),
+        knowledge_cutoff=date(2024, 6, 30),
+    )
+    assert arguments.effective_end_date == date(2024, 6, 30)
+
+
+def test_document_search_applies_knowledge_cutoff_in_demo_mode(monkeypatch) -> None:
+    monkeypatch.setenv("FINTRACE_KB_PATH", str(Path(".tmp_tests") / "missing-cutoff.sqlite"))
+    monkeypatch.setenv("FINTRACE_DOCUMENT_SEARCH_DEMO_MODE", "true")
+    result = document_search(
+        _call({"query": "存货", "mode": "bm25", "knowledge_cutoff": "2022-12-31"})
+    )
+    assert result.status.value == "success"
+    assert result.data["effective_end_date"] == "2022-12-31"
+    assert result.data["hits"]
+    assert all(hit["chunk"]["publish_date"] <= date(2022, 12, 31) for hit in result.data["hits"])
 
 
 def test_filtered_vector_search_scores_only_matching_company(monkeypatch) -> None:

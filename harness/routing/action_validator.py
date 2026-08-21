@@ -37,6 +37,12 @@ def validate_action(action: AgentAction, state: AgentState, resolver: EntityReso
     if "knowledge_cutoff" in arguments:
         errors.append("planner must not set knowledge_cutoff; it is injected by the workflow")
 
+    if action.capability == "document_retrieval" and state.parsed_request:
+        if not arguments.get("company_ids") and len(state.parsed_request.entities) == 1:
+            arguments["company_ids"] = list(state.parsed_request.entities)
+        if not arguments.get("document_types") and state.parsed_request.document_types:
+            arguments["document_types"] = list(state.parsed_request.document_types)
+
     company_ids = arguments.get("company_ids")
     if company_ids is not None:
         if not isinstance(company_ids, list) or not company_ids:
@@ -111,12 +117,18 @@ def _canonical_company(term: str, resolver: EntityResolver | None) -> str | None
 
 
 def _is_duplicate(action: AgentAction, state: AgentState) -> bool:
-    fingerprint = {
-        key: value for key, value in action.arguments.items() if key not in {"query", "reason", "operation"}
-    }
+    fingerprint = _action_fingerprint(action.arguments)
     for entry in state.tool_call_history:
         if entry.tool_name != action.tool_name or entry.operation != action.operation:
             continue
-        if entry.arguments == fingerprint:
+        if _action_fingerprint(entry.arguments) == fingerprint:
             return True
     return False
+
+
+def _action_fingerprint(arguments: dict) -> dict:
+    fingerprint = {key: value for key, value in arguments.items() if key not in {"reason", "operation", "knowledge_cutoff"}}
+    query = fingerprint.get("query")
+    if isinstance(query, str):
+        fingerprint["query"] = " ".join(query.lower().split())
+    return fingerprint

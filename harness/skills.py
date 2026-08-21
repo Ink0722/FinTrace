@@ -48,7 +48,7 @@ def run_skill(
     payload = json.dumps(runtime_context, ensure_ascii=False, default=str)
     input_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
-    active_client = client or QwenClient()
+    active_client = client or client_for_skill(skill)
     if not active_client.enabled:
         return None, LlmCallRecord(
             prompt_id=skill_file.prompt_id,
@@ -94,3 +94,10 @@ def _retry_hint(error: str) -> str:
         "\n\n--- 上一次输出未通过 Schema 校验，错误如下，请修正后重新输出符合 Schema 的 JSON ---\n"
         f"{error}"
     )
+
+
+PLANNER_SKILLS = {"request_parser", "next_action_planner", "evidence_reviewer", "action_repair"}
+
+
+def client_for_skill(skill: str) -> QwenClient:
+    return QwenClient.for_planner() if skill in PLANNER_SKILLS else QwenClient()

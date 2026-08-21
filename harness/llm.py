@@ -21,6 +21,19 @@ class QwenClient:
         ).rstrip("/")
         self.model = model if model is not None else os.getenv("QWEN_MODEL") or os.getenv("QWEN_CHAT_MODEL", "qwen-plus")
 
+    @classmethod
+    def for_planner(cls) -> "QwenClient":
+        return cls(
+            api_key=os.getenv("QWEN_PLANNER_API_KEY")
+            or os.getenv("DASHSCOPE_PLANNER_API_KEY")
+            or os.getenv("QWEN_API_KEY")
+            or os.getenv("DASHSCOPE_API_KEY", ""),
+            base_url=os.getenv("QWEN_PLANNER_BASE_URL") or os.getenv("QWEN_BASE_URL"),
+            model=os.getenv("QWEN_PLANNER_MODEL")
+            or os.getenv("QWEN_MODEL")
+            or os.getenv("QWEN_CHAT_MODEL", "qwen-plus"),
+        )
+
     @property
     def enabled(self) -> bool:
         return bool(self.api_key)

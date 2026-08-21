@@ -12,6 +12,7 @@ CAPABILITIES: dict[str, CapabilityDescriptor] = {
             tool="financial_analysis",
             operation="metric_query",
             required_slots=["company_ids", "metric_codes", "report_periods"],
+            supports_knowledge_cutoff=True,
             description="查询指定公司、报告期的财务指标原始值。",
         ),
         CapabilityDescriptor(
@@ -20,6 +21,7 @@ CAPABILITIES: dict[str, CapabilityDescriptor] = {
             tool="financial_analysis",
             operation="metric_compare",
             required_slots=["company_ids", "metric_codes", "report_periods"],
+            supports_knowledge_cutoff=True,
             description="单公司跨期或多公司单期确定性比较；不允许多公司×多期间。",
         ),
         CapabilityDescriptor(
@@ -33,6 +35,7 @@ CAPABILITIES: dict[str, CapabilityDescriptor] = {
             tool="ownership_analysis",
             operation="holding_query",
             required_slots=["company_ids_or_holder_ids"],
+            supports_knowledge_cutoff=True,
             description="主要股东快照查询（正向/反向/交叉）与集中度。",
         ),
         CapabilityDescriptor(
@@ -41,6 +44,7 @@ CAPABILITIES: dict[str, CapabilityDescriptor] = {
             tool="ownership_analysis",
             operation="holding_compare",
             required_slots=["company_ids", "start_date", "end_date"],
+            supports_knowledge_cutoff=True,
             description="同一公司两个观察时点的股东进入/退出/增减持比较。",
         ),
         CapabilityDescriptor(
@@ -54,6 +58,7 @@ CAPABILITIES: dict[str, CapabilityDescriptor] = {
             tool="document_search",
             operation="search",
             required_slots=["query"],
+            supports_knowledge_cutoff=True,
             description="公告正文与研报摘要的混合检索。",
         ),
         CapabilityDescriptor(

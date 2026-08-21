@@ -116,6 +116,7 @@ def test_capability_registry_reflects_real_implementation() -> None:
     assert CAPABILITIES["financial_risk_scan"].implemented is False
     assert CAPABILITIES["ownership_penetration"].implemented is False
     assert ("financial_analysis", "metric_query") in implemented_operations()
+    assert CAPABILITIES["document_retrieval"].supports_knowledge_cutoff is True
     assert candidate_capabilities("financial_investigation") == [
         "financial_metric_query",
         "financial_metric_compare",

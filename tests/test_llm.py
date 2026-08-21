@@ -1,4 +1,5 @@
 from harness.llm import QwenClient
+from harness.skills import client_for_skill
 from harness.graph.workflow import run_agent
 from schemas.enums import ToolStatus
 from schemas.tool_results import ToolResult
@@ -25,6 +26,21 @@ def test_qwen_client_prefers_qwen_env_names(monkeypatch) -> None:
     client = QwenClient()
     assert client.api_key == "qwen-key"
     assert client.model == "qwen-model"
+
+
+def test_planner_client_uses_independent_env_names(monkeypatch) -> None:
+    monkeypatch.setenv("QWEN_API_KEY", "main-key")
+    monkeypatch.setenv("QWEN_MODEL", "main-model")
+    monkeypatch.setenv("QWEN_PLANNER_API_KEY", "planner-key")
+    monkeypatch.setenv("QWEN_PLANNER_BASE_URL", "https://planner.example/v1")
+    monkeypatch.setenv("QWEN_PLANNER_MODEL", "planner-model")
+    client = QwenClient.for_planner()
+    assert client.api_key == "planner-key"
+    assert client.base_url == "https://planner.example/v1"
+    assert client.model == "planner-model"
+    assert client_for_skill("next_action_planner").model == "planner-model"
+    assert client_for_skill("evidence_reviewer").model == "planner-model"
+    assert client_for_skill("final_answer").model == "main-model"
 
 
 def test_missing_llm_config_returns_error_not_deterministic_answer(monkeypatch) -> None:
