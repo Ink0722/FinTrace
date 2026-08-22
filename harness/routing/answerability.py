@@ -9,7 +9,6 @@ UNSUPPORTED_FAMILIES = {
     "realtime_market_query": "现有数据不包含历史或实时行情。",
     "user_account_query": "系统不处理用户账户、持仓或交易。",
     "prediction_request": "系统不提供缺乏证据的确定性预测或投资建议。",
-    "ownership_penetration": "多跳股权穿透（penetration）当前版本未实现。",
 }
 
 SLOT_QUESTIONS = {
@@ -17,6 +16,8 @@ SLOT_QUESTIONS = {
     "report_periods": "请明确报告期，例如 2024 年、2024 年一季度或半年报。",
     "metric_codes": "请明确要查询的财务指标，例如营业收入、净利润或经营现金流。",
     "start_date_and_end_date": "请给出比较的两个时间点或区间，例如 2024 年中和年末。",
+    "source_entity_id": "请明确要从哪一个股东或主体开始穿透。",
+    "as_of_date": "请明确股权关系的观察日期。",
 }
 
 
@@ -69,6 +70,15 @@ def _missing_slots(parsed: ParsedRequest) -> list[str]:
             missing.append("company_ids")
         if not (parsed.start_date and parsed.end_date) and len(parsed.periods) < 2 and len(parsed.as_of_dates) < 2:
             missing.append("start_date_and_end_date")
+        return missing
+    if family == "ownership_penetration":
+        missing = []
+        if not parsed.entities:
+            missing.append("company_ids")
+        if not parsed.people:
+            missing.append("source_entity_id")
+        if not parsed.as_of_dates and not parsed.end_date:
+            missing.append("as_of_date")
         return missing
     if family == "document_retrieval":
         return [] if parsed.entities or "公告" in parsed.raw_query or "研报" in parsed.raw_query else ["company_ids"]

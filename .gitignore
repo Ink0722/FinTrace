@@ -53,6 +53,9 @@ data/*
 # Generated evaluation traces
 evaluation/reports/*.jsonl
 !evaluation/reports/.gitkeep
+evaluation/runs/*.jsonl
+evaluation/runs/*.lock
+!evaluation/runs/.gitkeep
 
 # Office/editor temporary files
 ~$*

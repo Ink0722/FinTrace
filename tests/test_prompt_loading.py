@@ -12,7 +12,7 @@ from schemas.request import ParsedRequest
 def test_global_policy_has_valid_header() -> None:
     policy = load_prompt("01_global_policy.md")
     assert policy.prompt_id == "fintrace.global_policy"
-    assert policy.version == "1.1.0"
+    assert policy.version == "1.2.0"
     assert "Evidence 边界" in policy.body
 
 
@@ -21,6 +21,12 @@ def test_skill_registry_files_exist_with_headers() -> None:
         prompt = load_prompt(filename)
         assert prompt.prompt_id.startswith("fintrace.")
         assert prompt.body, f"{filename} has an empty body"
+
+
+def test_action_repair_prompt_matches_output_schema() -> None:
+    prompt = load_prompt("05_action_repair.md")
+    assert prompt.version == "1.2.0"
+    assert '"error_class"' not in prompt.body
 
 
 def test_build_system_prompt_joins_policy_and_skill() -> None:

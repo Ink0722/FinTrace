@@ -7,14 +7,16 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-OWNERSHIP_MAPPING_VERSION = "ownership-holdings-v1"
+OWNERSHIP_MAPPING_VERSION = "ownership-holdings-v3"
 SHAREHOLDERS_FILENAME = "shareholders.jsonl"
+RESEARCH_REPORTS_FILENAME = "research_reports.jsonl"
 
 
 @dataclass(frozen=True)
 class OwnershipAnalysisConfig:
     normalized_dir: Path
     index_path: Path
+    entity_index_path: Path
 
     @classmethod
     def from_env(cls) -> "OwnershipAnalysisConfig":
@@ -25,6 +27,10 @@ class OwnershipAnalysisConfig:
             index_path=_path(
                 "FINTRACE_OWNERSHIP_INDEX_PATH",
                 PROJECT_ROOT / "data" / "indexes" / "ownership_analysis" / "ownership_holdings.sqlite",
+            ),
+            entity_index_path=_path(
+                "FINTRACE_ENTITY_INDEX_PATH",
+                PROJECT_ROOT / "data" / "indexes" / "entity_resolution" / "entity_master.sqlite",
             ),
         )
 

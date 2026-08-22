@@ -34,6 +34,8 @@ def _action_queue(parsed: ParsedRequest) -> list[AgentAction]:
     entities = parsed.entities
 
     if family in {"financial_investigation", "financial_metric_query", "financial_metric_compare", "unknown"}:
+        if family == "financial_investigation" and len(entities) == 1 and len(parsed.periods) >= 2:
+            queue.append(_risk_scan_action(parsed))
         if entities and parsed.metrics and parsed.periods:
             queue.append(_metric_query_action(parsed))
         if entities and parsed.metrics and len(parsed.periods) >= 2 and len(entities) == 1:
@@ -54,6 +56,10 @@ def _action_queue(parsed: ParsedRequest) -> list[AgentAction]:
             start, end = _compare_boundary(parsed)
             if start and end:
                 queue.append(_holding_compare_action(parsed, start, end))
+        if family == "ownership_penetration" and len(entities) == 1 and len(parsed.people) == 1:
+            as_of = parsed.as_of_dates[-1] if parsed.as_of_dates else parsed.end_date
+            if as_of:
+                queue.append(_penetration_action(parsed, parsed.people[0], entities[0], as_of))
         queue.append(_document_action(parsed))
     elif family == "event_investigation":
         if entities:
@@ -123,6 +129,26 @@ def _metric_compare_action(parsed: ParsedRequest) -> AgentAction:
     )
 
 
+def _risk_scan_action(parsed: ParsedRequest) -> AgentAction:
+    arguments = {
+        "query": parsed.raw_query,
+        "operation": "risk_scan",
+        "company_ids": parsed.entities[:1],
+        "report_periods": parsed.periods,
+    }
+    if parsed.focus_topics:
+        arguments["focus_topics"] = parsed.focus_topics
+    return AgentAction(
+        action="call_tool",
+        capability="financial_risk_scan",
+        tool_name="financial_analysis",
+        operation="risk_scan",
+        arguments=arguments,
+        reason="执行可复核的财务风险规则扫描。",
+        expected_evidence="规则输入、阈值、计算值与财务行级证据",
+    )
+
+
 def _holding_query_action(parsed: ParsedRequest) -> AgentAction:
     arguments: dict = {"query": parsed.raw_query, "operation": "holding_query", "top_n": 10}
     if parsed.entities:
@@ -172,6 +198,26 @@ def _holder_reverse_action(parsed: ParsedRequest) -> AgentAction:
     )
 
 
+def _penetration_action(parsed: ParsedRequest, source: str, target: str, as_of: str) -> AgentAction:
+    return AgentAction(
+        action="call_tool",
+        capability="ownership_penetration",
+        tool_name="ownership_analysis",
+        operation="penetration",
+        arguments={
+            "query": parsed.raw_query,
+            "operation": "penetration",
+            "source_entity_id": source,
+            "target_entity_id": target,
+            "as_of_date": as_of,
+            "max_depth": 4,
+            "max_paths": 10,
+        },
+        reason="在主要股东有效快照中搜索有界持股路径。",
+        expected_evidence="路径每一跳的持股比例、快照日期与证据",
+    )
+
+
 def _document_action(parsed: ParsedRequest, *, drop_type_filter: bool = False) -> AgentAction:
     arguments: dict = {"query": parsed.raw_query, "top_k": DEFAULT_TOP_K}
     if parsed.entities:
@@ -192,7 +238,7 @@ def _document_action(parsed: ParsedRequest, *, drop_type_filter: bool = False) -
 def _event_action(parsed: ParsedRequest) -> AgentAction:
     arguments: dict = {
         "query": parsed.raw_query,
-        "scope": "entity",
+        "operation": "event_query",
         "entity_ids": parsed.entities,
     }
     if parsed.event_types:

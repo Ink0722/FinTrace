@@ -20,6 +20,7 @@ class EventRecord(BaseModel):
     company_id: str
     event_type: EventType
     event_date: date
+    announcement_date: date | None = None
     entities: list[str] = Field(default_factory=list)
     title: str
     summary: str
@@ -27,6 +28,8 @@ class EventRecord(BaseModel):
     evidence_id: str | None = None
     source_path: str | None = None
     page: int | None = None
+    extraction_method: str = "structured_record"
+    quality_flags: list[str] = Field(default_factory=list)
 
 
 class EventCluster(BaseModel):

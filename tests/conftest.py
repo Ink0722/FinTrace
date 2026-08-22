@@ -8,6 +8,8 @@ import pytest
 def isolated_session_store(monkeypatch, tmp_path):
     """Every test gets its own session database; never touch data/sessions."""
     monkeypatch.setenv("FINTRACE_SESSIONS_PATH", str(tmp_path / f"sessions_{uuid4().hex}.sqlite"))
+    monkeypatch.setenv("TRACE_PATH", str(tmp_path / f"traces_{uuid4().hex}.jsonl"))
+    monkeypatch.setenv("FINTRACE_EVAL_LOG_PATH", str(tmp_path / f"turns_{uuid4().hex}.jsonl"))
     yield
 
 
@@ -25,5 +27,5 @@ def disable_real_llm_calls(monkeypatch):
     monkeypatch.delenv("FINTRACE_OWNERSHIP_INDEX_PATH", raising=False)
     monkeypatch.delenv("FINTRACE_FINANCIAL_NORMALIZED_DIR", raising=False)
     monkeypatch.delenv("FINTRACE_FINANCIAL_INDEX_PATH", raising=False)
-    monkeypatch.delenv("EVENT_DATA_SOURCE", raising=False)
-    monkeypatch.delenv("EVENTS_PATH", raising=False)
+    monkeypatch.delenv("FINTRACE_EVENT_NORMALIZED_DIR", raising=False)
+    monkeypatch.delenv("FINTRACE_EVENT_INDEX_PATH", raising=False)

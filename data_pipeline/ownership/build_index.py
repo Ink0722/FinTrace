@@ -10,6 +10,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
+from data_pipeline.entity_resolution.build_index import SCHEMA_VERSION as ENTITY_SCHEMA_VERSION
 from tools.ownership_analysis.config import OWNERSHIP_MAPPING_VERSION, SHAREHOLDERS_FILENAME, OwnershipAnalysisConfig
 
 
@@ -53,6 +54,23 @@ CREATE TABLE holder_entities (
 );
 
 CREATE INDEX idx_holder_entities_name ON holder_entities(name);
+
+CREATE TABLE listed_company_entities (
+    company_id TEXT NOT NULL PRIMARY KEY,
+    canonical_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL
+);
+
+CREATE INDEX idx_listed_company_name ON listed_company_entities(normalized_name);
+
+CREATE TABLE holder_company_links (
+    holder_entity_id TEXT NOT NULL,
+    company_id TEXT NOT NULL,
+    match_method TEXT NOT NULL,
+    PRIMARY KEY(holder_entity_id, company_id)
+);
+
+CREATE INDEX idx_holder_company_links_company ON holder_company_links(company_id);
 """
 
 
@@ -71,21 +89,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build the FinTrace shareholder holdings index.")
     parser.add_argument("--normalized-dir", type=Path, default=config.normalized_dir)
     parser.add_argument("--output", type=Path, default=config.index_path)
+    parser.add_argument("--entity-index", type=Path, default=config.entity_index_path)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    result = build_ownership_index(args.normalized_dir, args.output)
+    result = build_ownership_index(args.normalized_dir, args.output, args.entity_index)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 
-def build_ownership_index(normalized_dir: Path, output_path: Path) -> dict:
+def build_ownership_index(normalized_dir: Path, output_path: Path, entity_index_path: Path) -> dict:
     started = time.perf_counter()
     source_path = normalized_dir / SHAREHOLDERS_FILENAME
     if not source_path.is_file():
         raise FileNotFoundError(f"Missing normalized shareholder file: {source_path}")
+    _validate_entity_index(entity_index_path)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = output_path.with_suffix(output_path.suffix + ".tmp")
@@ -118,6 +138,9 @@ def build_ownership_index(normalized_dir: Path, output_path: Path) -> dict:
             if batch:
                 _insert_records(connection, batch)
             _insert_entities(connection, entities)
+            company_entities, holder_company_links = _load_resolved_entities(entity_index_path)
+            _insert_company_entities(connection, company_entities)
+            _insert_holder_company_links(connection, holder_company_links)
             connection.commit()
             inserted_rows = connection.execute("SELECT COUNT(*) FROM holder_records").fetchone()[0]
         os.replace(temporary_path, output_path)
@@ -134,6 +157,11 @@ def build_ownership_index(normalized_dir: Path, output_path: Path) -> dict:
             "mtime_ns": source_path.stat().st_mtime_ns,
             "sha256": _sha256(source_path),
         },
+        "entity_index": {
+            "path": str(entity_index_path),
+            "sha256": _sha256(entity_index_path),
+            "schema_version": ENTITY_SCHEMA_VERSION,
+        },
         "rows": {
             "parsed": stats["parsed"],
             "inserted": inserted_rows,
@@ -146,6 +174,8 @@ def build_ownership_index(normalized_dir: Path, output_path: Path) -> dict:
             "resolved": sum(1 for item in entities.values() if item["identity_quality"] == "resolved"),
             "unresolved": sum(1 for item in entities.values() if item["identity_quality"] == "unresolved"),
         },
+        "listed_company_entities": len(company_entities),
+        "holder_company_links": len(holder_company_links),
         "elapsed_ms": round((time.perf_counter() - started) * 1000),
     }
     manifest_path = output_path.with_name("manifest.json")
@@ -282,6 +312,53 @@ def _insert_entities(connection: sqlite3.Connection, entities: dict[str, dict]) 
         "INSERT INTO holder_entities VALUES (?, ?, ?, ?, ?, ?)",
         rows,
     )
+
+
+def _validate_entity_index(path: Path) -> None:
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Missing entity index: {path}. Build it with: "
+            "python -m data_pipeline.entity_resolution.build_index"
+        )
+    manifest_path = path.with_name("manifest.json")
+    if not manifest_path.is_file():
+        raise ValueError(f"Missing entity index manifest: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("status") != "complete" or manifest.get("schema_version") != ENTITY_SCHEMA_VERSION:
+        raise ValueError(f"Entity index is stale or incomplete: {manifest_path}")
+
+
+def _load_resolved_entities(path: Path) -> tuple[dict[str, str], list[tuple[str, str, str]]]:
+    with closing(sqlite3.connect(path)) as connection:
+        companies = {
+            str(row[0]): str(row[1])
+            for row in connection.execute(
+                "SELECT entity_id, canonical_name FROM entities WHERE entity_type = 'LISTED_COMPANY'"
+            )
+        }
+        links = [
+            (str(row[0]), str(row[1]), str(row[2]))
+            for row in connection.execute(
+                """
+                SELECT source_entity_id, canonical_entity_id, match_method
+                FROM entity_links
+                WHERE link_type = 'SAME_LEGAL_ENTITY'
+                  AND review_status IN ('auto_confirmed', 'human_confirmed')
+                """
+            )
+        ]
+    return companies, links
+
+
+def _insert_company_entities(connection: sqlite3.Connection, companies: dict[str, str]) -> None:
+    connection.executemany(
+        "INSERT INTO listed_company_entities VALUES (?, ?, ?)",
+        [(company_id, name, "".join(name.split()).upper()) for company_id, name in companies.items()],
+    )
+
+
+def _insert_holder_company_links(connection: sqlite3.Connection, links: list[tuple[str, str, str]]) -> None:
+    connection.executemany("INSERT INTO holder_company_links VALUES (?, ?, ?)", links)
 
 
 def _count_skip(stats: dict, reason: str) -> None:

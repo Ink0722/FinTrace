@@ -88,7 +88,7 @@ def build_direct_action(parsed: ParsedRequest) -> AgentAction | None:
     if family == "event_query" and len(parsed.entities) == 1:
         arguments = {
             "query": parsed.raw_query,
-            "scope": "entity",
+            "operation": "event_query",
             "entity_ids": parsed.entities,
         }
         if parsed.event_types:

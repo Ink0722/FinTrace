@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -163,20 +164,30 @@ class OwnershipRepository:
         placeholders = ",".join("?" for _ in holder_entity_ids)
         record_columns = ", ".join(f"r.{column.strip()}" for column in _RECORD_COLUMNS.split(","))
         sql = f"""
-            WITH candidate AS (
-                SELECT target_company_id, holder_end_date, MAX(announcement_date) AS announcement_date
+            WITH relevant_company AS (
+                SELECT DISTINCT target_company_id
                 FROM holder_records
-                WHERE announcement_date <= ? AND holder_end_date <= ?
-                GROUP BY target_company_id, holder_end_date
+                WHERE holder_entity_id IN ({placeholders})
+            ),
+            candidate AS (
+                SELECT r.target_company_id, r.holder_end_date,
+                       MAX(r.announcement_date) AS announcement_date
+                FROM holder_records r
+                JOIN relevant_company rc ON rc.target_company_id = r.target_company_id
+                WHERE r.announcement_date <= ? AND r.holder_end_date <= ?
+                GROUP BY r.target_company_id, r.holder_end_date
             ),
             effective AS (
-                SELECT c1.target_company_id, c1.holder_end_date, c1.announcement_date
-                FROM candidate c1
-                WHERE c1.holder_end_date = (
-                    SELECT MAX(c2.holder_end_date)
-                    FROM candidate c2
-                    WHERE c2.target_company_id = c1.target_company_id
+                SELECT target_company_id, holder_end_date, announcement_date
+                FROM (
+                    SELECT candidate.*,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY target_company_id
+                               ORDER BY holder_end_date DESC
+                           ) AS snapshot_rank
+                    FROM candidate
                 )
+                WHERE snapshot_rank = 1
             )
             SELECT {record_columns},
                 (
@@ -195,7 +206,9 @@ class OwnershipRepository:
             WHERE r.holder_entity_id IN ({placeholders})
             ORDER BY r.holding_ratio DESC, r.holder_name ASC
         """
-        rows = self._fetch_all(sql, [announcement_bound, end_bound, *holder_entity_ids])
+        rows = self._fetch_all(
+            sql, [*holder_entity_ids, announcement_bound, end_bound, *holder_entity_ids]
+        )
         return [_row_to_record(row) for row in rows]
 
     def resolve_holder_terms(self, terms: list[str]) -> list[dict]:
@@ -231,6 +244,39 @@ class OwnershipRepository:
             for row in rows
         }
 
+    def outgoing_holdings(
+        self, node_id: str, *, as_of: str, knowledge_cutoff: str | None
+    ) -> list[HolderRecord]:
+        """Return effective-snapshot edges owned by a holder or linked listed company."""
+        holder_ids = [node_id] if self._entity_ids_by_id(node_id) else []
+        linked = self._fetch_all(
+            "SELECT holder_entity_id FROM holder_company_links WHERE company_id = ?",
+            [node_id],
+        )
+        holder_ids.extend(row[0] for row in linked)
+        holder_ids = list(dict.fromkeys(holder_ids))
+        return self.reverse_holdings(holder_ids, as_of=as_of, knowledge_cutoff=knowledge_cutoff)
+
+    def node_name(self, node_id: str) -> str:
+        row = self._fetch_one(
+            "SELECT canonical_name FROM listed_company_entities WHERE company_id = ?",
+            [node_id],
+        )
+        if row:
+            return str(row[0])
+        row = self._fetch_one(
+            "SELECT name FROM holder_entities WHERE holder_entity_id = ?",
+            [node_id],
+        )
+        return str(row[0]) if row else node_id
+
+    def holder_company_link(self, holder_entity_id: str) -> str | None:
+        rows = self._fetch_all(
+            "SELECT company_id FROM holder_company_links WHERE holder_entity_id = ? ORDER BY company_id",
+            [holder_entity_id],
+        )
+        return str(rows[0][0]) if len(rows) == 1 else None
+
     def _entity_ids_by_name(self, name: str) -> list[str]:
         rows = self._fetch_all(
             "SELECT holder_entity_id FROM holder_entities WHERE name = ?",
@@ -256,7 +302,9 @@ class OwnershipRepository:
             return connection.execute(sql, params).fetchall()
 
 
-def validate_ownership_index_snapshot(index_path: Path, normalized_dir: Path) -> list[str]:
+def validate_ownership_index_snapshot(
+    index_path: Path, normalized_dir: Path, entity_index_path: Path
+) -> list[str]:
     manifest_path = index_path.with_name("manifest.json")
     if not manifest_path.is_file():
         return [f"Ownership index manifest not found: {manifest_path}"]
@@ -281,7 +329,22 @@ def validate_ownership_index_snapshot(index_path: Path, normalized_dir: Path) ->
         errors.append(f"normalized source size changed: {source_path}")
     if int(recorded.get("mtime_ns", -1)) != stat.st_mtime_ns:
         errors.append(f"normalized source modification time changed: {source_path}")
+    recorded_entity = manifest.get("entity_index")
+    if not isinstance(recorded_entity, dict):
+        errors.append("Ownership index manifest has no entity_index object.")
+    elif not entity_index_path.is_file():
+        errors.append(f"entity index not found: {entity_index_path}")
+    elif recorded_entity.get("sha256") != _sha256(entity_index_path):
+        errors.append(f"entity index changed: {entity_index_path}")
     return errors
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _row_to_record(row: sqlite3.Row) -> HolderRecord:

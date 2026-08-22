@@ -1,80 +1,80 @@
 # event_timeline
 
-事件时间线工具负责读取结构化事件记录，按公司、事件类型和时间范围过滤，再按时间窗口聚类，并输出事件证据。
+事件时间线工具读取由比赛公告离线构建的冻结 SQLite 索引，提供事件筛选排序和可解释聚类。正式调用不读取 CSV，不回退 sample，也不临时让 LLM 从全库公告中编造事件。
 
-## 入口函数
+## 入口与 Operations
 
 ```python
 tools.event_timeline.interface.event_timeline(call: ToolCall) -> ToolResult
 ```
 
-## 工作流
+| Operation | 必填参数 | 可选参数 | 职责 |
+| --- | --- | --- | --- |
+| `event_query` | 单一 `entity_ids` | `start_date`、`end_date`、`event_types`、`keywords`、`limit`、`knowledge_cutoff` | 筛选、去重并按时间返回原始事件节点 |
+| `event_cluster` | 单一 `entity_ids` | 上述参数及 `window_days` | 聚合相关事件，保留全部成员及聚类证据 |
 
-```text
-event_timeline(call)
-→ 校验 entity_ids 为仅含一个公司的数组
-→ 解析 event_types / start_date / end_date
-→ company_id = entity_ids[0]
-→ load_event_dataset(company_id)
-   → CSV 存在：CsvEventDataSource
-   → CSV 不存在且未强制：SampleEventDataSource
-→ validate_events()
-→ filter_events()
-→ cluster_events()
-→ evidence_from_clusters()
-→ summarize_events()
-→ ToolResult
+`event_query` 不生成因果链；`event_cluster` 只表达时间和主题相关性。Agent 根据结构化结果组织时间线，不另设重叠的 `timeline_generate` operation。
+
+## 离线构建
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.events.build_index
 ```
 
-当前结构化事件数据按单一公司加载，因此 `entity_ids` 包含多个主体时返回 `INVALID_ARGUMENT`，不会静默选择第一项。
+输入与产物：
 
-## 数据来源
+```text
+data/normalized/announcements.jsonl
+  -> data/indexes/event_timeline/events.sqlite
+  -> data/indexes/event_timeline/manifest.json
+```
 
 环境变量：
 
+```dotenv
+FINTRACE_EVENT_NORMALIZED_DIR=data/normalized
+FINTRACE_EVENT_INDEX_PATH=data/indexes/event_timeline/events.sqlite
+```
+
+构建器按公告标题和类别执行确定性分类，无法分类的记录计入 manifest，不强行生成事件。首版事件的 `event_date` 等于公告日期，`announcement_date` 表示信息可见日期，`extraction_method=announcement_title_rule` 明确它只能支撑标题级事实。原文细节仍应调用 `document_search`。
+
+支持类型：`regulatory_inquiry`、`audit_opinion`、`controller_change`、`share_pledge`、`financial_restated`、`major_litigation`、`risk_warning`。
+
+当前真实索引包含 7,311 条标题事件。构建统计及源文件 SHA-256 以 `manifest.json` 为准。
+
+## 在线工作流
+
 ```text
-EVENT_DATA_SOURCE=auto|csv|sample
-EVENTS_PATH=data/events/events.csv
+event_timeline(call)
+-> EventTimelineArguments（extra=forbid、operation 专属参数）
+-> validate_event_index_snapshot()
+-> EventRepository.query_events()（公司/日期/类型/关键词/截止日/limit）
+-> event_query: 返回排序事件
+   event_cluster: cluster_events() 并返回成员和聚类依据
+-> evidence_from_clusters()
+-> ToolResult
 ```
 
-回退策略：
-
-- CSV 不存在且 `EVENT_DATA_SOURCE=auto`：回退内置样例，并 warning；
-- CSV 存在但目标公司无事件：返回 `DATA_NOT_AVAILABLE`；
-- CSV 解析或校验失败：返回 `VALIDATION_FAILED`。
-
-## CSV 字段
-
-```csv
-event_id,company_id,event_date,event_type,title,description,entities,source_doc_id,source_path,page,evidence_id
-EVT-001,000001.SZ,2023-05-12,regulatory_inquiry,年报问询函,交易所要求公司说明存货跌价准备是否充分,000001.SZ;交易所,DOC-INQUIRY-2023,data/raw_documents/inquiry.pdf,2,EVID-EVT-001
-```
-
-支持事件类型：
-
-- `regulatory_inquiry`
-- `audit_opinion`
-- `controller_change`
-- `share_pledge`
-- `financial_restated`
-- `major_litigation`
-- `risk_warning`
+`knowledge_cutoff` 过滤 `announcement_date`，避免在历史问题中看到未来才披露的公告。查询为空返回 `DATA_NOT_AVAILABLE`，只能说明当前索引和过滤条件下未命中。
 
 ## 聚类规则
 
-当前只做轻量聚类，不宣称因果：
+首版使用确定性轻量聚类：同一公司、同一事件类型、相邻事件不超过 `window_days`，且实体 Jaccard 重合度不低于 0.3。默认窗口为 30 天，允许范围 1 至 365 天。每个簇保留所有原始事件和证据，不把相邻事件写成因果关系。
 
-```text
-同一 company_id
-同一 event_type
-与当前簇末尾事件间隔不超过 30 天
-实体重合度不低于 0.3
-```
+## 错误策略
+
+| 场景 | 错误类型 |
+| --- | --- |
+| operation、事件类型、日期或参数形状错误 | `INVALID_ARGUMENT` |
+| 索引缺失、过期或查询为空 | `DATA_NOT_AVAILABLE` |
+| 冻结事件记录校验失败 | `VALIDATION_FAILED` |
+| SQLite 暂时失败 | `TEMPORARY_DATABASE_ERROR` |
 
 ## 关键文件
 
-- `interface.py`：工具入口和错误策略
-- `data_source.py`：数据源抽象
-- `csv_loader.py`：CSV 到 `EventRecord`
-- `validation.py`：事件记录校验
-- `timeline.py`：过滤、聚类、Evidence 生成
+- `config.py`：normalized 与事件索引路径、mapping version；
+- `repository.py`：SQLite 查询和 manifest 一致性；
+- `interface.py`：参数模型、operation 分发与 ToolResult；
+- `timeline.py`：聚类、事件证据和稳定 cluster ID；
+- `validation.py`：事件记录校验；
+- `data_pipeline/events/build_index.py`：公告到标题事件 SQLite 的原子构建。

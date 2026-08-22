@@ -1,127 +1,92 @@
-from datetime import date
-from pathlib import Path
+import json
 import shutil
+from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
+from data_pipeline.events.build_index import build_event_index, classify_event
 from schemas.enums import ToolName
 from schemas.tool_calls import ToolCall
 from tools.event_timeline.interface import event_timeline
-from tools.event_timeline.sample_data import load_sample_events
-from tools.event_timeline.timeline import cluster_events, filter_events
 
 
-def test_filter_events_by_company_and_type() -> None:
-    events = filter_events(
-        load_sample_events(),
-        company_id="000001.SZ",
-        event_types=["regulatory_inquiry"],
-        start_date=date(2023, 1, 1),
-        end_date=date(2023, 12, 31),
-    )
-    assert len(events) == 2
-    assert all(event.event_type == "regulatory_inquiry" for event in events)
+@pytest.fixture
+def event_index(monkeypatch):
+    root = Path(".tmp_tests") / f"events_{uuid4().hex}"
+    normalized = root / "normalized"
+    index_path = root / "indexes" / "events.sqlite"
+    normalized.mkdir(parents=True)
+    rows = [
+        _announcement("DOC-1", "000777.SZ", "2023-05-12", "关于收到年报问询函的公告"),
+        _announcement("DOC-2", "000777.SZ", "2023-05-20", "关于回复年报问询函的公告"),
+        _announcement("DOC-3", "000777.SZ", "2024-01-10", "关于收到行政处罚决定书的公告"),
+        _announcement("DOC-4", "000888.SZ", "2023-05-15", "关于股份质押的公告"),
+        _announcement("DOC-5", "000777.SZ", "2024-02-10", "日常经营情况公告"),
+    ]
+    source = normalized / "announcements.jsonl"
+    source.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
+    manifest = build_event_index(normalized, index_path)
+    monkeypatch.setenv("FINTRACE_EVENT_NORMALIZED_DIR", str(normalized))
+    monkeypatch.setenv("FINTRACE_EVENT_INDEX_PATH", str(index_path))
+    try:
+        yield index_path, manifest
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
 
 
-def test_cluster_events_merges_related_inquiries() -> None:
-    events = filter_events(load_sample_events(), "000001.SZ", ["regulatory_inquiry"], None, None)
-    clusters = cluster_events(events)
-    assert len(clusters) == 1
-    assert len(clusters[0].events) == 2
+def test_build_event_index_classifies_supported_announcements(event_index) -> None:
+    _, manifest = event_index
+    assert manifest["stats"]["inserted_rows"] == 4
+    assert manifest["stats"]["unclassified"] == 1
+    assert classify_event("收到审计意见", []) == "audit_opinion"
 
 
-def test_event_timeline_tool_returns_evidence() -> None:
-    result = event_timeline(
-        ToolCall(
-            tool_call_id="CALL-001",
-            tool_name=ToolName.EVENT_TIMELINE,
-            arguments={"entity_ids": ["000001.SZ"], "event_types": ["regulatory_inquiry"]},
-            reason="test",
-        )
-    )
+def test_event_query_returns_ordered_events_and_evidence(event_index) -> None:
+    result = event_timeline(_call({"operation": "event_query", "entity_ids": ["000777.SZ"], "event_types": ["regulatory_inquiry"]}))
     assert result.status.value == "success"
-    assert result.data["clusters"]
-    assert result.evidence
+    assert [item["event_date"] for item in result.data["events"]] == ["2023-05-12", "2023-05-20"]
+    assert result.data["clusters"] == []
+    assert len(result.evidence) == 2
+    assert all(item.fact["extraction_method"] == "announcement_title_rule" for item in result.evidence)
 
 
-def test_event_timeline_prefers_csv_data(monkeypatch) -> None:
-    test_root = write_events_csv(
-        [
-            "event_id,company_id,event_date,event_type,title,description,entities,source_doc_id,source_path,page,evidence_id",
-            "EVT-CSV-001,000777.SZ,2023-05-12,regulatory_inquiry,年报问询函,交易所要求说明存货跌价准备,000777.SZ;交易所,DOC-EVT-001,data/raw/inquiry.pdf,2,EVID-EVT-001",
-            "EVT-CSV-002,000777.SZ,2023-05-20,regulatory_inquiry,问询回复,公司回复存货跌价准备问题,000777.SZ;交易所,DOC-EVT-002,data/raw/reply.pdf,3,EVID-EVT-002",
-        ]
-    )
-    try:
-        monkeypatch.setenv("EVENT_DATA_SOURCE", "csv")
-        monkeypatch.setenv("EVENTS_PATH", str(test_root / "events.csv"))
-        result = event_timeline(
-            ToolCall(
-                tool_call_id="CALL-001",
-                tool_name=ToolName.EVENT_TIMELINE,
-                arguments={"entity_ids": ["000777.SZ"], "event_types": ["regulatory_inquiry"]},
-                reason="test",
-            )
-        )
-        assert result.status.value == "success"
-        assert result.data["data_source"] == "csv"
-        assert result.data["summary"]["event_count"] == 2
-        assert len(result.data["clusters"]) == 1
-        assert {item.evidence_id for item in result.evidence} == {"EVID-EVT-001", "EVID-EVT-002"}
-        assert result.evidence[0].source.source_path in {"data/raw/inquiry.pdf", "data/raw/reply.pdf"}
-    finally:
-        shutil.rmtree(test_root, ignore_errors=True)
+def test_event_cluster_groups_related_events_without_causality_claim(event_index) -> None:
+    result = event_timeline(_call({"operation": "event_cluster", "entity_ids": ["000777.SZ"], "event_types": ["regulatory_inquiry"], "window_days": 30}))
+    assert result.status.value == "success"
+    assert len(result.data["clusters"]) == 1
+    assert len(result.data["clusters"][0]["events"]) == 2
+    assert any("not causality" in warning for warning in result.warnings)
 
 
-def test_event_csv_company_without_records_returns_error(monkeypatch) -> None:
-    test_root = write_events_csv(
-        [
-            "event_id,company_id,event_date,event_type,title,description,entities,source_doc_id,evidence_id",
-            "EVT-CSV-001,000777.SZ,2023-05-12,regulatory_inquiry,年报问询函,交易所要求说明存货跌价准备,000777.SZ,DOC-EVT-001,EVID-EVT-001",
-        ]
-    )
-    try:
-        monkeypatch.setenv("EVENT_DATA_SOURCE", "csv")
-        monkeypatch.setenv("EVENTS_PATH", str(test_root / "events.csv"))
-        result = event_timeline(
-            ToolCall(
-                tool_call_id="CALL-001",
-                tool_name=ToolName.EVENT_TIMELINE,
-                arguments={"entity_ids": ["000888.SZ"]},
-                reason="test",
-            )
-        )
-        assert result.status.value == "failed"
-        assert result.error.error_type.value == "DATA_NOT_AVAILABLE"
-    finally:
-        shutil.rmtree(test_root, ignore_errors=True)
+def test_event_query_respects_knowledge_cutoff(event_index) -> None:
+    result = event_timeline(_call({"operation": "event_query", "entity_ids": ["000777.SZ"], "knowledge_cutoff": "2023-12-31"}))
+    assert result.status.value == "success"
+    assert all(item["announcement_date"] <= "2023-12-31" for item in result.data["events"])
 
 
-def test_event_csv_validation_error(monkeypatch) -> None:
-    test_root = write_events_csv(
-        [
-            "event_id,company_id,event_date,event_type,title,description,entities,source_doc_id,evidence_id",
-            ",000777.SZ,2023-05-12,regulatory_inquiry,,,000777.SZ,DOC-EVT-001,EVID-EVT-001",
-        ]
-    )
-    try:
-        monkeypatch.setenv("EVENT_DATA_SOURCE", "csv")
-        monkeypatch.setenv("EVENTS_PATH", str(test_root / "events.csv"))
-        result = event_timeline(
-            ToolCall(
-                tool_call_id="CALL-001",
-                tool_name=ToolName.EVENT_TIMELINE,
-                arguments={"entity_ids": ["000777.SZ"]},
-                reason="test",
-            )
-        )
-        assert result.status.value == "failed"
-        assert result.error.error_type.value == "VALIDATION_FAILED"
-    finally:
-        shutil.rmtree(test_root, ignore_errors=True)
+def test_event_query_empty_result_is_not_evidence_of_no_event(event_index) -> None:
+    result = event_timeline(_call({"operation": "event_query", "entity_ids": ["000777.SZ"], "event_types": ["share_pledge"]}))
+    assert result.status.value == "failed"
+    assert result.error.error_type.value == "DATA_NOT_AVAILABLE"
 
 
-def write_events_csv(lines: list[str]) -> Path:
-    test_root = Path(".tmp_tests") / f"events_csv_{uuid4().hex}"
-    test_root.mkdir(parents=True, exist_ok=True)
-    (test_root / "events.csv").write_text("\n".join(lines), encoding="utf-8")
-    return test_root
+def test_event_query_rejects_cluster_only_argument(event_index) -> None:
+    result = event_timeline(_call({"operation": "event_query", "entity_ids": ["000777.SZ"], "window_days": 30}))
+    assert result.status.value == "failed"
+    assert result.error.error_type.value == "INVALID_ARGUMENT"
+
+
+def test_missing_event_index_returns_build_instruction(monkeypatch) -> None:
+    monkeypatch.setenv("FINTRACE_EVENT_INDEX_PATH", str(Path(".tmp_tests") / "missing-events.sqlite"))
+    result = event_timeline(_call({"operation": "event_query", "entity_ids": ["000777.SZ"]}))
+    assert result.status.value == "failed"
+    assert "data_pipeline.events.build_index" in result.error.details["build_command"]
+
+
+def _call(arguments: dict) -> ToolCall:
+    return ToolCall(tool_call_id="CALL-EVENT-001", tool_name=ToolName.EVENT_TIMELINE, arguments=arguments, reason="test")
+
+
+def _announcement(document_id: str, company_id: str, announcement_date: str, title: str) -> dict:
+    return {"id": document_id, "object_id": "{" + document_id + "}", "s_info_windcode": company_id, "ann_dt": announcement_date, "n_info_title": title, "category_names": [], "document_path": f"data/source/announcements/{document_id}.txt"}

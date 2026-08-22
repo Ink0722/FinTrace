@@ -9,6 +9,7 @@ from tools.entity_resolver import EntityResolver
 from harness.evidence.review import answer_status_from_review, review_evidence
 from harness.memory.session_store import SessionStore
 from harness.routing.action_validator import validate_action
+from harness.routing.planner import plan_next_action
 from harness.routing.entities import extract_entities
 from harness.routing.time_resolver import resolve_time
 
@@ -19,6 +20,42 @@ def make_state(parsed: ParsedRequest | None = None) -> AgentState:
         user_request=UserRequest(raw_query="测试"),
         parsed_request=parsed,
     )
+
+
+def test_rule_planner_emits_financial_risk_scan() -> None:
+    parsed = ParsedRequest(
+        raw_query="分析600519.SH近两年财务风险",
+        entities=["600519.SH"],
+        periods=["2023-12-31", "2024-12-31"],
+        task_family="financial_investigation",
+    )
+    action = plan_next_action(make_state(parsed))
+    assert action.capability == "financial_risk_scan"
+    assert action.operation == "risk_scan"
+    assert action.arguments["report_periods"] == parsed.periods
+
+
+def test_rule_planner_emits_penetration_after_candidate_lookup() -> None:
+    parsed = ParsedRequest(
+        raw_query="张三在2025年2月1日如何穿透持有000001.SZ",
+        entities=["000001.SZ"],
+        people=["张三"],
+        as_of_dates=["2025-02-01"],
+        task_family="ownership_penetration",
+    )
+    state = make_state(parsed)
+    state.tool_call_history.append(
+        ToolCallEntry(
+            tool_name="ownership_analysis",
+            operation="holding_query",
+            arguments={"company_ids": ["000001.SZ"], "holder_ids": ["张三"], "as_of_date": "2025-02-01", "top_n": 10},
+            status="success",
+        )
+    )
+    action = plan_next_action(state)
+    assert action.capability == "ownership_penetration"
+    assert action.arguments["source_entity_id"] == "张三"
+    assert action.arguments["target_entity_id"] == "000001.SZ"
 
 
 # --- time resolver ---

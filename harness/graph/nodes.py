@@ -29,6 +29,7 @@ def load_session_node(state: AgentState) -> AgentState:
     state.executed_nodes.append("load_session")
     store = SessionStore()
     loaded = store.load(state.session_id)
+    state.turn_id = loaded.get("turn_count", 0) + 1
     if loaded["current_context"]:
         state.current_context = CurrentContext(**loaded["current_context"])
     if not state.conversation_summary:
@@ -260,8 +261,8 @@ def execute_one_tool_node(state: AgentState) -> AgentState:
     state.executed_nodes.append("execute_one_tool")
     action = state.current_action
     arguments = dict(action.arguments or {})
-    # financial/ownership tools require `operation` in arguments; document/event forbid it.
-    if action.tool_name in {"financial_analysis", "ownership_analysis"} and action.operation:
+    # Multi-operation tools receive the validated operation explicitly.
+    if action.tool_name in {"financial_analysis", "ownership_analysis", "event_timeline"} and action.operation:
         arguments.setdefault("operation", action.operation)
     capability = get_capability(action.capability or "")
     if state.knowledge_cutoff and capability and capability.supports_knowledge_cutoff:
@@ -418,6 +419,7 @@ def persist_session_node(state: AgentState) -> AgentState:
         conversation_summary=state.conversation_summary,
         verified_findings=state.previous_findings,
         recent_messages=state.messages,
+        turn_count=state.turn_id,
     )
     return state
 

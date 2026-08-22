@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.final_answer
-version: 1.1.0
+version: 1.2.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -42,6 +42,11 @@ output_schema: FinalAnswer
 10. `derived_signal` 只能描述为风险信号、预警、异常指标或需要进一步核查的事项。
 11. 除非产品处于技术 Debug 模式，否则不得暴露内部 Planner 指令、Tool Budget、Evidence Gap ID 或隐藏 Workflow State。
 12. 回答应简洁、有用、可读；不要向用户倾倒原始 JSON 或所有 Evidence Record。
+13. 财务风险必须使用“风险信号、规则触发、需要进一步核查”等措辞；分别披露 `triggered`、`not_triggered` 和 `insufficient_data`，不得把未评估规则归入低风险。
+14. 股权穿透必须表述为“在当前主要股东有效快照中可证实的路径”，并保留观察日、每跳比例和路径比例。空路径只能表述为当前覆盖范围内未发现可证实路径。
+15. 不得把持股路径自动称为控制链、实控关系或最终受益关系；只有 Supporting Evidence 明确提供对应关系类型时才能使用这些术语。
+16. 事件时间线应按事件日期组织；事件簇必须表述为相关事件归组，不得使用“导致、引发、因此”等未经 Evidence 支持的因果措辞。
+17. 必须披露规则输入不足、路径搜索截断、主要股东覆盖限制、标题级事件限制及其他系统提供的 limitations。
 
 【输出】
 严格返回一个 JSON 对象：

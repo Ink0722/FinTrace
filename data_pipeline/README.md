@@ -12,6 +12,7 @@ data_pipeline/
   competition/  Competition file conversion and announcement recovery
   documents/    Document normalization, Chunk construction and vector indexing
   events/       Event normalization, clustering and timeline construction
+  entity_resolution/ Canonical legal-entity matching and review candidates
   ownership/    Shareholder normalization and ownership graph construction
   financial/    Statement normalization and financial feature construction
 ```
@@ -155,6 +156,39 @@ The builder extracts only versioned metrics declared in
 `tools.financial_analysis.metric_catalog` and writes
 `data/indexes/financial_analysis/financial_metrics.sqlite` plus `manifest.json`.
 The normalized JSONL files remain the source of truth.
+
+## Ownership holdings and path index
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.entity_resolution.build_company_universe
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.entity_resolution.fetch_company_profiles --estimate
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.entity_resolution.fetch_company_profiles --code 600030
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.entity_resolution.fetch_company_profiles
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.entity_resolution.build_index
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.ownership.build_index
+```
+
+The universe step takes the union of company codes observed in shareholders,
+research, announcements and financial statements. The AKShare step is
+resumable and freezes legal names under
+`data/source/company_profiles/`; it is never called online. The entity builder
+creates the auditable `entity_master.sqlite`. Exact,
+unambiguous normalized names and legal-core names unique on both sides become
+confirmed same-entity links; ambiguous matches remain review candidates and are not used online. The v3
+ownership builder imports only confirmed links into `holder_company_links` for
+bounded penetration searches. Fuzzy or LLM-generated links are never promoted
+without review.
+
+## Announcement event index
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.events.build_index
+```
+
+The builder classifies normalized announcement titles with versioned deterministic
+rules and writes `data/indexes/event_timeline/events.sqlite` plus `manifest.json`.
+Unclassified or invalid rows are counted instead of being force-labeled. Online
+event queries never fall back to CSV or sample records.
 
 ## Reproducibility
 

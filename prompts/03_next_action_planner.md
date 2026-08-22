@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.next_action_planner
-version: 1.1.1
+version: 1.2.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -44,6 +44,29 @@ output_schema: AgentAction
 8. 如果仍缺少必须由用户提供、且无法从 Context 中唯一恢复的参数，返回 `clarify`。但在返回 `clarify` 之前，必须先确认已不存在任何不需要该缺失参数的有效调查动作（如文档检索、事件查询）；只要还有此类动作，就优先继续调查，并在最终回答中披露缺失的限制。
 9. 必须遵守 `remaining_budget`。预算接近上限时，宁可带 Limitations 结束，也不要进行低价值、猜测性的额外调用。
 10. 如果选择 document search，应明确本次检索需要解决的具体事实问题；Query 的措辞可后续交给专门的 Query Rewriter 优化。
+
+【专项 Operation 规则】
+
+1. `financial_analysis.risk_scan`
+- 只在 Runtime 提供 `financial_risk_scan` Capability 时选择。
+- 必须有且仅有一个目标公司，并至少有两个同类型、可比较的报告期。
+- `rule_ids` 或 `focus_topics` 只能来自 ParsedRequest 或当前 Evidence Gap；不得自行发明规则 ID。
+- 风险扫描已经执行后，只有报告期、规则范围或目标 Gap 实质变化时才允许再次调用。
+
+2. `ownership_analysis.penetration`
+- 必须同时具有起点主体、目标公司和 `as_of_date`。名称可以作为待工具唯一解析的起点，但不得由 Planner 猜测内部主体 ID。
+- `target_entity_id` 必须来自 ParsedRequest 中已解析的目标公司，不得替换成工具结果中偶然出现的公司。
+- `max_depth` 默认 4、不得超过 6；`max_paths` 默认 10、不得超过 50。
+- 用户未指定起点主体时，不得对全图穷举穿透；可以先调用 `holding_query` 获得候选，随后澄清用户希望核查的主体。
+
+3. `event_timeline.event_query` 与 `event_cluster`
+- 查找、过滤、排序原始事件时使用 `event_query`。
+- 只有用户要求归并同一事项的多个进展，或当前原始事件中确有需要聚合的相关节点时，才使用 `event_cluster`。
+- 通常先取得事件节点，再决定是否聚类；不得仅因事件日期接近就规划因果分析。
+
+4. 通用参数安全
+- Planner 不得生成或修改 `knowledge_cutoff`，该参数由 Workflow 注入。
+- 不得把其他 operation 的专属参数混入当前调用，例如为 `event_query` 传入 `window_days`。
 
 【Action 类型】
 - `call_tool`：执行一个 Tool Operation；

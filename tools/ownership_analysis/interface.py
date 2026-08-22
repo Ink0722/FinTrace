@@ -26,6 +26,7 @@ from tools.ownership_analysis.repository import (
     OwnershipRepository,
     validate_ownership_index_snapshot,
 )
+from tools.ownership_analysis.penetration import find_holding_paths
 
 
 DATA_LIMITATION = (
@@ -78,6 +79,33 @@ class OwnershipAnalysisArguments(BaseModel):
         raise ValueError(f"unsupported operation: {self.operation}")
 
 
+class PenetrationArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["penetration"]
+    source_entity_id: str
+    target_entity_id: str
+    as_of_date: date
+    max_depth: int = Field(default=4, ge=1, le=6)
+    max_paths: int = Field(default=10, ge=1, le=50)
+    knowledge_cutoff: date | None = None
+    query: str | None = None
+
+    @field_validator("source_entity_id", "target_entity_id")
+    @classmethod
+    def normalize_entity_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("entity ids must not be blank")
+        return value.upper() if "." in value else value
+
+    @model_validator(mode="after")
+    def validate_distinct_nodes(self) -> "PenetrationArguments":
+        if self.source_entity_id == self.target_entity_id:
+            raise ValueError("source_entity_id and target_entity_id must be different")
+        return self
+
+
 def _normalize_collection(values: list[str], *, upper: bool) -> list[str]:
     normalized = [value.strip() for value in values]
     if upper:
@@ -115,12 +143,7 @@ class HolderResolution:
 def ownership_analysis(call: ToolCall) -> ToolResult:
     started = time.perf_counter()
     if call.arguments.get("operation") == "penetration":
-        return _failed(
-            call,
-            started,
-            ErrorType.UNSUPPORTED_QUERY,
-            "penetration is not implemented in the current ownership_analysis version.",
-        )
+        return _penetration(call, started)
     try:
         arguments = OwnershipAnalysisArguments.model_validate(call.arguments)
         config = OwnershipAnalysisConfig.from_env()
@@ -145,7 +168,9 @@ def ownership_analysis(call: ToolCall) -> ToolResult:
                 "normalized_dir": str(config.normalized_dir),
             },
         )
-    snapshot_errors = validate_ownership_index_snapshot(config.index_path, config.normalized_dir)
+    snapshot_errors = validate_ownership_index_snapshot(
+        config.index_path, config.normalized_dir, config.entity_index_path
+    )
     if snapshot_errors:
         return _failed(
             call,
@@ -167,6 +192,67 @@ def ownership_analysis(call: ToolCall) -> ToolResult:
             f"Ownership holdings index query failed: {type(exc).__name__}: {exc}",
             retryable=isinstance(exc, sqlite3.OperationalError),
         )
+
+
+def _penetration(call: ToolCall, started: float) -> ToolResult:
+    try:
+        arguments = PenetrationArguments.model_validate(call.arguments)
+        config = OwnershipAnalysisConfig.from_env()
+    except (ValidationError, TypeError, ValueError) as exc:
+        return _failed(call, started, ErrorType.INVALID_ARGUMENT, f"Invalid penetration arguments or configuration: {exc}", details={"arguments": call.arguments})
+    repository = OwnershipRepository(config.index_path)
+    if not repository.available():
+        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, f"Ownership holdings index not found: {config.index_path}", details={"build_command": BUILD_COMMAND})
+    snapshot_errors = validate_ownership_index_snapshot(
+        config.index_path, config.normalized_dir, config.entity_index_path
+    )
+    if snapshot_errors:
+        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "Ownership holdings index is stale or incomplete; rebuild it from normalized data.", details={"errors": snapshot_errors, "build_command": BUILD_COMMAND})
+    cutoff = arguments.knowledge_cutoff.isoformat() if arguments.knowledge_cutoff else None
+    source_entity_id = arguments.source_entity_id
+    if not repository.entity_map([source_entity_id]) and "." not in source_entity_id:
+        resolution = repository.resolve_holder_terms([source_entity_id])[0]
+        if resolution["status"] == "ambiguous":
+            return _failed(call, started, ErrorType.ENTITY_AMBIGUOUS, "The penetration source entity name is ambiguous.", details={"term": source_entity_id, "entity_ids": resolution["entity_ids"]})
+        if resolution["status"] == "not_found":
+            return _failed(call, started, ErrorType.ENTITY_NOT_FOUND, "The penetration source entity was not found in the shareholder index.", details={"term": source_entity_id})
+        source_entity_id = resolution["entity_ids"][0]
+    try:
+        paths, records, search_summary = find_holding_paths(
+            repository,
+            source_entity_id=source_entity_id,
+            target_entity_id=arguments.target_entity_id,
+            as_of_date=arguments.as_of_date.isoformat(),
+            knowledge_cutoff=cutoff,
+            max_depth=arguments.max_depth,
+            max_paths=arguments.max_paths,
+        )
+    except sqlite3.Error as exc:
+        return _failed(call, started, ErrorType.TEMPORARY_DATABASE_ERROR, f"Ownership path query failed: {type(exc).__name__}: {exc}", retryable=isinstance(exc, sqlite3.OperationalError))
+    limitations = [
+        "结果仅基于主要股东披露快照中的可见持股边，不等于完整工商股权、实际控制或最终受益关系。",
+    ]
+    warnings = []
+    if cutoff is None:
+        warnings.append("knowledge_cutoff was not provided; as_of_date is used as the disclosure visibility bound.")
+    if not paths:
+        warnings.append("No provable path was found in the covered major-shareholder snapshots; this does not prove that no ownership relationship exists.")
+    if search_summary["max_depth_reached"] or search_summary["max_paths_reached"]:
+        warnings.append("Path search reached a configured bound; additional paths may exist in the covered data.")
+    data = {
+        "operation": "penetration",
+        "source_entity_id": source_entity_id,
+        "source_term": arguments.source_entity_id,
+        "target_entity_id": arguments.target_entity_id,
+        "effective_as_of_date": arguments.as_of_date.isoformat(),
+        "knowledge_cutoff": cutoff,
+        "paths": paths,
+        "search_summary": search_summary,
+        "coverage": {"source": "major_shareholder_snapshots", "path_count": len(paths)},
+        "limitations": limitations,
+        "message": "ownership_analysis penetration completed",
+    }
+    return ToolResult(tool_call_id=call.tool_call_id, tool_name=ToolName.OWNERSHIP_ANALYSIS, status=ToolStatus.SUCCESS, data=data, evidence=build_holding_evidence(records, call.tool_call_id, config.shareholders_path), warnings=warnings, metrics=ToolMetrics(execution_time_ms=_elapsed_ms(started)))
 
 
 def _holding_query(

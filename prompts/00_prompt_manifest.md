@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.prompt_manifest
-version: 1.1.0
+version: 1.2.0
 language: zh-CN
 depends_on: []
 output_schema: null
@@ -29,10 +29,8 @@ System Prompt = `01_global_policy.md` + 当前 Skill Prompt。
 | evidence_reviewer | 04_evidence_reviewer.md | 是 | EvidenceReview |
 | action_repair | 05_action_repair.md | 是 | ActionRepairResult |
 | final_answer | 06_final_answer.md | 是 | FinalAnswer |
-| memory_summarizer | 07_memory_summarizer.md | 可选 | MemoryUpdate |
-| search_query_rewriter | 08_search_query_rewriter.md | 可选 | SearchQuerySpec |
 
-所有 Skill 的 `depends_on` 均为 `fintrace.global_policy@1.x`。
+当前 `02` 至 `06` Skill 的 `depends_on` 均为 `fintrace.global_policy@1.x`。Capability 名称、implemented 状态、必填参数与参数上限仍由 Runtime Registry / Tool Schema 注入；Prompt 只维护决策与证据边界。
 
 ## 运行时数据契约
 
@@ -40,11 +38,9 @@ System Prompt = `01_global_policy.md` + 当前 Skill Prompt。
 | --- | --- |
 | request_parser | raw_query, recent_context, current_context, deterministic_entity_candidates, deterministic_time_candidates |
 | next_action_planner | ParsedRequest, CurrentContext, CandidateCapabilities, EvidenceLedger, EvidenceGaps, ToolCallHistory, RemainingBudget |
-| evidence_reviewer | ParsedRequest, VerifiedClaims, EvidenceLedger, ToolCallHistory |
-| action_repair | FailedAction, ValidatorError, CapabilityDefinition, ParsedRequest |
+| evidence_reviewer | ParsedRequest, VerifiedClaims, EvidenceLedger, ToolCallHistory, AvailableCapabilities |
+| action_repair | FailedAction, ValidatorError, CapabilityDefinition, ToolSchema, ParsedRequest, RepairBudget |
 | final_answer | raw_query, ResolvedContext, AnswerStatus, VerifiedClaims, SupportingEvidence, Limitations |
-| memory_summarizer | finalized_turn, previous_context, verified_findings |
-| search_query_rewriter | EvidenceGap, ResolvedContext, DocumentSearchCapability |
 
 ## Trace 要求
 

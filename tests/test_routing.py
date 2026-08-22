@@ -113,11 +113,14 @@ def test_direct_gate_ownership_snapshot() -> None:
 
 
 def test_capability_registry_reflects_real_implementation() -> None:
-    assert CAPABILITIES["financial_risk_scan"].implemented is False
-    assert CAPABILITIES["ownership_penetration"].implemented is False
+    assert CAPABILITIES["financial_risk_scan"].implemented is True
+    assert CAPABILITIES["ownership_penetration"].implemented is True
     assert ("financial_analysis", "metric_query") in implemented_operations()
+    assert ("financial_analysis", "risk_scan") in implemented_operations()
+    assert ("ownership_analysis", "penetration") in implemented_operations()
     assert CAPABILITIES["document_retrieval"].supports_knowledge_cutoff is True
     assert candidate_capabilities("financial_investigation") == [
+        "financial_risk_scan",
         "financial_metric_query",
         "financial_metric_compare",
         "document_retrieval",

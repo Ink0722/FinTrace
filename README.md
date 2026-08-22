@@ -9,31 +9,18 @@ Last Update on Codex 2026/8/18
 - 项目技术拆解和目录结构；
 - Pydantic Schema；
 - 四个工具的固定输入输出；
-- 财务风险、股权穿透、文档检索和事件时间线工具；
-- CSV / SQLite / FAISS / sample 的多数据源回退策略；
+- 财务指标、主要股东快照、文档检索和事件时间线工具；
+- SQLite / FTS5 / FAISS 的冻结索引与严格失败策略；
 - 基于 LangGraph 的 Agent Harness 和组合工具路由；
 - Qwen 兼容 OpenAI API 的 LLM 客户端封装；
 - Pytest 测试骨架；
 - `.env.example` 和本地运行说明。
 
-真实数据未接入时会回退 sample 数据；如果显式配置了 CSV/知识库但目标数据缺失，工具会返回结构化错误，避免用样例数据冒充真实数据。
+在线工具只读取由比赛数据构建的冻结索引。索引缺失、过期或目标数据不可得时返回结构化错误，不使用 sample 数据冒充真实事实。
 
 ## 竞赛设计文档
 
-建议按编号阅读：
-
-1. [竞赛要求对齐](docs/00-竞赛要求对齐.md)：三项攻关任务、量化指标、数据缺口和实施路线；
-2. [数据与工具总览](docs/01-数据与工具总览.md)：五组数据、四个工具和证据类型的总体关系；
-3. [多轮评测方案](docs/02-多轮评测方案.md)：35 个会话、1,410 个 Turn 和 0.5M 长历史压力评测；
-4. [股东快照设计](docs/03-股东快照设计.md)：时序持股边、有限穿透和增强图谱要求；
-5. [公告索引设计](docs/04-公告索引设计.md)：标题级时间线、正文入口和事件聚类边界；
-6. [财务报表设计](docs/05-财务报表设计.md)：期间口径、跨表勾稽、风险规则和 F1 标签；
-7. [研报摘要设计](docs/06-研报摘要设计.md)：结构化过滤、混合检索和机构观点证据。
-8. [Agent 评测实施方案](docs/07-Agent评测实施方案.md)：准确率边界、人工标注、自纠错、工具基准和财务 F1。
-9. [数据集构建技术白皮书](docs/08-数据集构建技术白皮书.md)：原始数据转换、公告正文获取、异常修复和数据资产验收。
-10. [统一文本 Document 构建白皮书](docs/09-统一文本Document构建白皮书.md)：字段映射、保守清理、原子写入、质量验收和下游边界。
-11. [多轮问题集人工标注指南](docs/10-多轮问题集人工标注指南.md)：Answerability、主体日期、工具和必要 Chunk 的人工标注规则。
-12. [Chunk 构建技术白皮书](docs/11-Chunk构建技术白皮书.md)：段落保持、章节继承、超长文本切分、版本冻结和全量质量验收。
+请从 [文档导航](docs/README.md) 开始阅读。主文档明确区分竞赛目标、数据边界、在线工作流、评测与标注；专题数据设计仅作实现参考，历史材料已移至 `docs/archive/`。
 
 ## Code Review 导览
 
@@ -114,48 +101,90 @@ python -m app.api.main
 python -m harness.graph.workflow "分析一下示例公司的财务风险"
 ```
 
-也可以使用交互式 CLI：
+### CLI 调用方案
+
+CLI 支持默认轻量问答、可读 Trace、完整 Debug Trace，以及本地和 FastAPI 两种执行方式。普通界面和 Trace 均不会直接输出原始 JSON；只有显式使用 `--json` 时才输出供程序处理的完整 `AgentState`。
+
+单轮轻量问答：
 
 ```powershell
-F:\conda_envs\FinTrace\python.exe -m app.cli "分析一下示例公司的存货和现金流风险"
-F:\conda_envs\FinTrace\python.exe -m app.cli "监管问询函有没有关注存货跌价准备" --trace
-F:\conda_envs\FinTrace\python.exe -m app.cli
+F:\conda_envs\FinTrace\python.exe -m app.cli "600519.SH 2024年营业收入是多少"
 ```
 
-不带问题时会默认进入 REPL 式连续问答：
+默认先显示回答，随后只显示一行状态：
 
 ```text
-================================================================
-🔎 FinTrace 交互式 CLI
-================================================================
-输入问题后按 Enter，系统会自动路由到财务、股权、文档或事件工具。
-输入 exit 或 quit 退出。启动时加 --trace 可显示可审计推理路径、工具调用和证据。
-运行模式：本地 run_agent
-LLM 状态：⚠️ 未配置 QWEN_API_KEY / DASHSCOPE_API_KEY，将返回结构化错误
-----------------------------------------------------------------
-🧑 你
-----------------------------------------------------------------
-> 分析一下示例公司的存货风险
-...
-🧑 你
-----------------------------------------------------------------
-> exit
+🤖 FinTrace
+------------------------------------------------------------------------
+贵州茅台（600519.SH）2024年度营业收入为……
+
+✅ 已回答 | 🛠️ 1 次工具 | 📎 1 条证据 | ⏱️ 6.9 秒
 ```
 
-也可以显式使用：
+需要观察请求解析、路由、工具输入、工具结果、证据和缺口时使用：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m app.cli `
+  "结合公告分析600519.SH的存货风险" `
+  --trace
+```
+
+`--trace` 使用中文字段逐项展示，不倾倒参数或结果 JSON。需要排查 LangGraph 节点时增加 `--debug-trace`。
+
+不带问题或显式使用 `--interactive` 会进入共享同一 `session_id` 的多轮对话：
 
 ```powershell
 F:\conda_envs\FinTrace\python.exe -m app.cli --interactive
 ```
 
+```text
+========================================================================
+🔎 FinTrace 多轮金融问答
+========================================================================
+[1] 🧑 你 > 贵州茅台2024年营业收入是多少？
+
+🤖 FinTrace
+……
+
+[2] 🧑 你 > 那它的存货呢？
+```
+
+交互命令：
+
+- `/status`：查看会话 ID、最近轮次、当前主体、期间和 Trace 状态；
+- `/trace on|off`：动态开关可读 Trace；
+- `/debug on|off`：动态开关完整 LangGraph 节点；
+- `/clear`：生成新会话 ID，后续问题不再继承旧上下文；
+- `/help`：显示命令帮助；
+- `exit` 或 `quit`：退出。
+
 CLI 参数：
 
-- `--trace`：显示中文友好的可审计推理路径、工具调用和证据 ID；
-- `--debug-trace`：在 `--trace` 输出中追加底层 LangGraph 节点名；
-- `--json`：输出完整 `AgentState` JSON；
+- `--trace`：显示实体、时间、任务解析，路由、工具输入与结果、证据和缺口；
+- `--debug-trace`：在可读 Trace 后追加全部 LangGraph 节点名和职责；
+- `--json`：仅用于单轮开发或程序集成；交互模式禁止使用；
 - `--session-id`：指定会话 ID；
 - `--api-url`：通过 FastAPI 服务调用 Agent；
 - `--interactive`：进入连续问答模式。
+
+### 逐轮日志与后续评测
+
+日志写入位于 `run_agent()`，因此本地 CLI、FastAPI 和未来前端都会记录相同格式。每轮产生两类 JSONL：
+
+```text
+evaluation/reports/traces.jsonl     # 开发审计：节点、规划、工具、证据缺口和 LLM 调用
+evaluation/runs/agent_turns.jsonl    # 评测记录：一轮一行的稳定紧凑字段
+```
+
+评测记录包含 `run_id`、`trace_id`、`session_id`、递增的 `turn_id`、问题、解析上下文、路由模式、工具调用摘要、证据 ID、回答、限制、错误、终止原因和耗时。它不保存 API Key、工具大对象或模型私有思维链；`run_id/trace_id` 可以把低分样本关联回完整 Trace。
+
+```dotenv
+TRACE_PATH=./evaluation/reports/traces.jsonl
+FINTRACE_EVAL_LOG_ENABLED=true
+FINTRACE_EVAL_LOG_PATH=./evaluation/runs/agent_turns.jsonl
+```
+
+关闭评测日志时设置 `FINTRACE_EVAL_LOG_ENABLED=false`。JSONL 写入使用进程锁和文件锁，避免并发请求互相覆盖。
 
 ## CLI 双模式
 
@@ -313,16 +342,16 @@ deployment/
 - 工具必须能脱离 Agent 独立测试；
 - MVP 优先稳定、可解释、可评测。
 
-Planner 采用“按需调用、综合分析主动检查”的策略：普通指标、公告或股东事实查询只调用必要工具。当前 `financial_analysis` 负责三张 normalized 财务报表的精确指标查询和确定性比较，`ownership_analysis` 负责主要股东快照查询、股东反查和跨期持股变化。财务 `risk_scan` 和股权 `penetration` 尚未实现，Agent 不得把指标比较描述成完整风险扫描，也不得把主要股东名单表述为完整控制关系。现有比赛文件不含历史或实时行情，相关问题返回数据不支持，不由 LLM 凭记忆补充。
+Planner 采用“按需调用、综合分析主动检查”的策略：普通指标、公告或股东事实查询只调用必要工具。`financial_analysis` 已支持确定性风险规则扫描；`ownership_analysis` 已支持主要股东快照范围内的有限持股路径搜索；`event_timeline` 使用公告构建的冻结事件索引。风险信号不能直接认定造假，有限路径不能表述为完整控制关系。现有比赛文件不含历史或实时行情，相关问题返回数据不支持，不由 LLM 凭记忆补充。
 
 ## 当前工具进度
 
 | 工具 | 当前状态 | 数据来源 |
 |---|---|---|
-| `financial_analysis` | 已支持 normalized 三表索引、`metric_query`、`metric_compare` 和行级证据；`risk_scan` 暂未实现 | `data/normalized/*.jsonl` / `data/indexes/financial_analysis/financial_metrics.sqlite` |
-| `ownership_analysis` | 已支持 normalized 股东快照索引、`holding_query`、`holding_compare`、有效快照选择、集中度和行级证据；`penetration` 暂未实现 | `data/normalized/shareholders.jsonl` / `data/indexes/ownership_analysis/ownership_holdings.sqlite` |
+| `financial_analysis` | 已支持 `metric_query`、`metric_compare`、版本化 `risk_scan` 和行级证据 | `data/normalized/*.jsonl` / `data/indexes/financial_analysis/financial_metrics.sqlite` |
+| `ownership_analysis` | 已支持快照查询、比较、集中度及基于可桥接主体的有界 `penetration` | `data/normalized/shareholders.jsonl` / `data/indexes/ownership_analysis/ownership_holdings.sqlite` |
 | `document_search` | 已支持 FTS5 词法索引 + FAISS 向量的混合检索；词法索引缺失/失配时返回建库命令；demo 模式回退样例 | `data/indexes/document_search/fintrace_kb.sqlite` + `bm25_index.sqlite` / `vector.faiss` |
-| `event_timeline` | 已支持 CSV 事件数据、时间过滤、事件聚类和证据绑定 | `data/events/events.csv` / `tools/event_timeline/sample_data.py` |
+| `event_timeline` | 已支持公告标题事件 SQLite、时间/类型/关键词过滤、事件聚类和证据绑定 | `data/normalized/announcements.jsonl` / `data/indexes/event_timeline/events.sqlite` |
 
 ## Operation 功能说明
 
@@ -333,14 +362,14 @@ Planner 通过 `operation` 指定工具本次需要完成的具体任务。每�
 | `document_search` | `search` | 在公告正文和研报摘要中执行关键词或语义检索，并按公司、文档类型和发布日期过滤结果；工作流注入 `knowledge_cutoff` 防止召回截止日之后披露的材料，返回可追溯的 Chunk 及其来源信息。 | “贵州茅台的研报如何评价其盈利能力？”“公告中如何描述本次违规事项？” |
 | `financial_analysis` | `metric_query` | 查询一个或多个公司在指定报告期的原始财务指标或确定性派生指标，保留数值、单位、报表口径和来源。 | “查询公司 2024 年营业收入和净利润。” |
 | `financial_analysis` | `metric_compare` | 对同口径指标进行确定性计算：单公司加多个期间时返回有序序列、相邻期间变化和首尾累计变化，多公司加单一期间时返回各公司数值及差异；工具不生成趋势性语言结论。 | “分析公司近五年的经营现金流趋势。”“比较甲公司和乙公司 2024 年的资产负债率。” |
-| `financial_analysis` | `risk_scan` | 暂未实现；当前调用返回 `UNSUPPORTED_QUERY`，不会运行旧规则或生成风险评分。 | “扫描公司近三年的财务异常风险。” |
+| `financial_analysis` | `risk_scan` | 对同口径期间执行版本化确定性规则，返回命中、未命中、输入不足、公式、阈值和证据；不输出黑箱评分，也不直接认定造假。 | “扫描公司近三年的财务异常风险。” |
 | `ownership_analysis` | `holding_query` | 查询主要股东快照：提供 `company_ids` 时从公司查股东并返回集中度，提供 `holder_ids` 时从股东反查公司，同时提供则做交叉过滤。 | “公司 2024 年末的前十大股东有哪些？”“某基金出现在哪些公司的主要股东名单中？” |
 | `ownership_analysis` | `holding_compare` | 比较同一公司两个快照日期的主要股东名单，确定性识别进入、退出、增持和减持及其变化幅度。 | “哪些主要股东在两个快照日期之间进行了减持？” |
 | `ownership_analysis` | `penetration` | 在快照能够证明的持股关系中搜索指定主体到目标公司的有限多层路径，返回每一跳持股比例、路径比例乘积和完整性警告。 | “主体 A 通过哪些层级间接持有公司 B？” |
 | `event_timeline` | `event_query` | 按主体、事件类型、关键词和日期范围筛选事件，完成去重和排序，并可包含财务或股东派生信号；返回可供 Agent 组织时间线的事件节点及证据。 | “查询公司 2022 年以来受到处罚的事件。”“整理公司近三年的违规和财务风险时间线。” |
 | `event_timeline` | `event_cluster` | 根据事件类型、时间接近程度和实体重合度聚合相关事件，输出事件簇及聚合依据；只表达相关性和时序，不自动认定因果关系。 | “把同一轮违规调查及后续处罚聚合为一个事件簇。” |
 
-选择原则：查原文使用 `search`；只查询财务数值使用 `metric_query`；需要计算跨期变化、连续多期序列或跨公司差异时使用 `metric_compare`。当前不得规划 `risk_scan`。`metric_compare` 不支持“多个公司与多个期间”同时比较，因为这种输入无法唯一确定比较维度。工具负责数值排序和计算，Agent LLM 负责根据工具结果说明上升、下降、增速变化或拐点，不得自行补充数值。持股事实、反向持股查询和集中度统一使用 `holding_query`，股东变化使用 `holding_compare`，多层路径使用 `penetration`。查找、过滤和排序事件统一使用 `event_query`，Agent 根据返回节点组织时间线；需要将相关节点归并为事件簇时使用 `event_cluster`。
+选择原则：查原文使用 `search`；只查询财务数值使用 `metric_query`；确定性比较使用 `metric_compare`；跨科目风险排查使用 `risk_scan`。`metric_compare` 不支持“多个公司与多个期间”同时比较。工具负责数值与规则计算，Agent LLM 负责解释，不得补充数值。持股事实和集中度使用 `holding_query`，股东变化使用 `holding_compare`，指定主体到目标公司的有限路径使用 `penetration`。事件筛选排序使用 `event_query`，相关节点归并使用 `event_cluster`；事件簇不表示因果。
 
 文档调查会继承请求解析阶段唯一确定的公司和文档类型过滤条件，避免 Planner 漏填参数后执行无关的全库检索。同一轮最多进行一次初始检索和一次 Query 改写；之后仍未覆盖的证据缺口进入 Limitations，不继续消耗调查预算。
 
@@ -593,7 +622,7 @@ FINTRACE_OWNERSHIP_INDEX_PATH=data/indexes/ownership_analysis/ownership_holdings
 
 在线查询的核心是有效快照选择：对每个观察时点 `as_of_date`，只使用 `announcement_date <= as_of_date`（防止前视）且 `holder_end_date <= as_of_date` 的最晚快照；`as_of_date` 省略时使用最新已披露快照并在结果中回显实际日期。股东排名按同一快照内持股比例降序计算，不使用缺失严重的 `s_holder_sequence`。
 
-当前开放 `holding_query`（正向快照 + 集中度、按股东名反查、交叉过滤）和 `holding_compare`（进入、退出、增持、减持）。`penetration` 暂未实现，调用返回 `UNSUPPORTED_QUERY`。完整参数、实体 ID 规则和质量标志见 `tools/ownership_analysis/README.md`。
+当前开放 `holding_query`、`holding_compare` 和 `penetration`。穿透只扩展统一实体库中已经确认的上市公司主体，采用有界路径搜索并返回每跳快照证据；待审名称候选不会进入在线图，无路径不等于不存在关系。完整参数、实体 ID 规则和质量标志见 `tools/ownership_analysis/README.md`。
 
 结果固定携带能力边界：仅基于主要股东披露数据，不构成完整股权或实际控制人认定；退出主要股东名单不等于清仓。
 
@@ -612,29 +641,21 @@ FINTRACE_FINANCIAL_NORMALIZED_DIR=data/normalized
 FINTRACE_FINANCIAL_INDEX_PATH=data/indexes/financial_analysis/financial_metrics.sqlite
 ```
 
-当前开放 `metric_query` 和 `metric_compare`。每条结果保留 normalized 来源文件、原始字段、`object_id`、公告日期和映射版本，并生成稳定 Evidence。完整参数、指标目录和期间口径见 `tools/financial_analysis/README.md`。
+当前开放 `metric_query`、`metric_compare` 和 `risk_scan`。每条结果保留 normalized 来源、公告日期和映射版本；风险扫描额外返回规则版本、公式、阈值、计算输入、覆盖率及跳过原因。完整参数、指标目录和期间口径见 `tools/financial_analysis/README.md`。
 
 ## 事件时间线数据
 
-`event_timeline` 支持结构化事件数据源：
+`event_timeline` 使用 normalized 公告离线构建标题级事件索引：
 
-```text
-sample  # 内置样例
-csv     # data/events/events.csv
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.events.build_index
 ```
 
 环境变量：
 
-```text
-EVENT_DATA_SOURCE=csv
-EVENTS_PATH=data/events/events.csv
-```
-
-`events.csv`：
-
-```csv
-event_id,company_id,event_date,event_type,title,description,entities,source_doc_id,source_path,page,evidence_id
-EVT-001,000001.SZ,2023-05-12,regulatory_inquiry,年报问询函,交易所要求公司说明存货跌价准备是否充分,000001.SZ;交易所,DOC-INQUIRY-2023,data/raw_documents/inquiry.pdf,2,EVID-EVT-001
+```dotenv
+FINTRACE_EVENT_NORMALIZED_DIR=data/normalized
+FINTRACE_EVENT_INDEX_PATH=data/indexes/event_timeline/events.sqlite
 ```
 
 支持事件类型：
@@ -649,23 +670,7 @@ major_litigation
 risk_warning
 ```
 
-兼容别名：
-
-```text
-control_change      → controller_change
-regulatory_penalty  → risk_warning
-pledge              → share_pledge
-litigation          → major_litigation
-public_opinion      → risk_warning
-```
-
-回退策略：
-
-- CSV 不存在且未强制 `EVENT_DATA_SOURCE=csv`：使用内置样例，并返回 warning；
-- CSV 存在但目标公司没有事件：返回 `DATA_NOT_AVAILABLE`，不回退样例；
-- CSV 解析或校验失败：返回 `VALIDATION_FAILED`。
-
-CSV 中的 `evidence_id`、`source_doc_id`、`source_path`、`page` 会进入事件 Evidence。事件工具只处理结构化事件记录，不负责从原文临时抽取事件；原文检索和离线抽取应由文档知识库或外部 ETL 完成。
+每条首版事件标记 `extraction_method=announcement_title_rule`，只能证明某日披露了对应标题公告。`event_query` 负责筛选排序，`event_cluster` 负责可解释聚类；时间或主题相关不等于因果。索引缺失、过期或查询为空时显式返回结构化错误，不回退样例。
 
 ## 混合式路由
 

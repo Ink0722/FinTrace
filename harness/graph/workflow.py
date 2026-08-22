@@ -2,6 +2,7 @@
 import os
 import sys
 import time
+from uuid import uuid4
 from pathlib import Path
 
 from langgraph.graph import END, START, StateGraph
@@ -33,6 +34,7 @@ from harness.graph.nodes import (
     validate_tool_result_node,
 )
 from harness.tracing.jsonl import write_trace
+from harness.tracing.evaluation import write_evaluation_turn
 from schemas.agent_state import AgentState, Message, UserRequest
 
 
@@ -123,8 +125,17 @@ def run_agent(query: str, session_id: str = "SESSION-001") -> AgentState:
     )
     state = AgentState.model_validate(COMPILED_GRAPH.invoke(state))
     elapsed_ms = int((time.perf_counter() - started) * 1000)
+    run_id = f"RUN-{uuid4().hex.upper()}"
+    trace_id = f"TRACE-{uuid4().hex.upper()}"
+    try:
+        write_evaluation_turn(state, run_id=run_id, trace_id=trace_id, latency_ms=elapsed_ms)
+    except (OSError, ValueError) as exc:
+        state.warnings.append(f"Evaluation log write failed: {type(exc).__name__}: {exc}")
     write_trace(
         {
+            "run_id": run_id,
+            "trace_id": trace_id,
+            "turn_id": state.turn_id,
             "session_id": session_id,
             "user_query": query,
             "parsed_request": state.parsed_request.model_dump() if state.parsed_request else None,

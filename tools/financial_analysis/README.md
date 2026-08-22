@@ -197,17 +197,21 @@ announcement_date <= knowledge_cutoff
 
 公告日期优先使用 normalized 记录的 `actual_ann_dt`，缺失时才使用 `ann_dt`。未传截止日时使用当前 normalized 快照中的全部披露，并返回 warning，提醒结果没有执行历史可知性过滤。
 
-## 暂不支持 risk_scan
+## `risk_scan`
 
-传入：
+对单一公司至少两个同口径期间执行版本化确定性风险规则。示例：
 
 ```json
-{"operation": "risk_scan"}
+{
+  "operation": "risk_scan",
+  "company_ids": ["600519.SH"],
+  "report_periods": ["2023-12-31", "2024-12-31"],
+  "rule_ids": ["CASH_PROFIT_DIVERGENCE"],
+  "knowledge_cutoff": "2025-04-30"
+}
 ```
 
-工具返回 `UNSUPPORTED_QUERY`。当前代码不保留旧风险规则作为隐藏兜底，Planner 也不得生成该 operation。
-
-`metric_query` 和 `metric_compare` 只提供事实和计算结果。Agent 可以解释数值变化，但不能把它们描述为完整风险扫描、财务造假识别或风险评分。
+首版规则包括利润/经营现金流背离、应收/收入背离、存货/收入背离、短期偿债压力和利润率异常变化。输出逐条区分 `triggered`、`not_triggered`、`insufficient_data`，并给出公式、阈值、计算值、输入证据、规则版本和覆盖率。输入不足不会被解释为低风险；风险信号不能直接认定财务造假。
 
 ## 文件职责
 
@@ -218,6 +222,9 @@ announcement_date <= knowledge_cutoff
 - `query.py`：查询结果和缺失组合。
 - `comparison.py`：跨期、跨公司确定性计算。
 - `evidence.py`：指标 Evidence。
+- `risk_catalog.py`：规则目录、输入、阈值和版本。
+- `risk_rules.py`：无数据库依赖的规则纯函数。
+- `risk_scan.py`：规则调度、覆盖率和跳过原因。
 - `data_pipeline/financial/build_index.py`：normalized JSONL 到 SQLite。
 
 ## 测试

@@ -26,8 +26,12 @@ CAPABILITIES: dict[str, CapabilityDescriptor] = {
         ),
         CapabilityDescriptor(
             name="financial_risk_scan",
-            implemented=False,
-            description="财务风险规则扫描，目标态能力。",
+            implemented=True,
+            tool="financial_analysis",
+            operation="risk_scan",
+            required_slots=["company_ids", "report_periods"],
+            supports_knowledge_cutoff=True,
+            description="执行版本化财务风险规则，返回公式、阈值、计算值和证据。",
         ),
         CapabilityDescriptor(
             name="ownership_snapshot",
@@ -49,8 +53,12 @@ CAPABILITIES: dict[str, CapabilityDescriptor] = {
         ),
         CapabilityDescriptor(
             name="ownership_penetration",
-            implemented=False,
-            description="多跳股权穿透，目标态能力。",
+            implemented=True,
+            tool="ownership_analysis",
+            operation="penetration",
+            required_slots=["source_entity_id", "target_entity_id", "as_of_date"],
+            supports_knowledge_cutoff=True,
+            description="在主要股东有效快照中执行有界持股路径搜索。",
         ),
         CapabilityDescriptor(
             name="document_retrieval",
@@ -67,6 +75,7 @@ CAPABILITIES: dict[str, CapabilityDescriptor] = {
             tool="event_timeline",
             operation="event_query",
             required_slots=["entity_ids"],
+            supports_knowledge_cutoff=True,
             description="结构化事件筛选与排序。",
         ),
         CapabilityDescriptor(
@@ -75,6 +84,7 @@ CAPABILITIES: dict[str, CapabilityDescriptor] = {
             tool="event_timeline",
             operation="event_cluster",
             required_slots=["entity_ids"],
+            supports_knowledge_cutoff=True,
             description="相关事件聚合为事件簇。",
         ),
         CapabilityDescriptor(
@@ -109,6 +119,7 @@ def candidate_capabilities(task_family: str) -> list[str]:
         "financial_metric_query": ["financial_metric_query"],
         "financial_metric_compare": ["financial_metric_compare", "financial_metric_query"],
         "financial_investigation": [
+            "financial_risk_scan",
             "financial_metric_query",
             "financial_metric_compare",
             "document_retrieval",
@@ -116,7 +127,7 @@ def candidate_capabilities(task_family: str) -> list[str]:
         ],
         "ownership_snapshot": ["ownership_snapshot"],
         "ownership_compare": ["ownership_compare", "ownership_snapshot"],
-        "ownership_penetration": ["ownership_snapshot", "ownership_compare"],
+        "ownership_penetration": ["ownership_penetration", "ownership_snapshot", "ownership_compare"],
         "document_retrieval": ["document_retrieval"],
         "event_query": ["event_query", "event_cluster"],
         "event_investigation": ["event_query", "event_cluster", "document_retrieval"],

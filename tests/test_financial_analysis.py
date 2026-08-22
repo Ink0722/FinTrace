@@ -20,8 +20,8 @@ def financial_index(monkeypatch):
     _write_jsonl(
         normalized / "balance_sheets.jsonl",
         [
-            _row("OBJ-BS-1", "000001.SZ", "2023-12-31", inventories=100, tot_assets=1000),
-            _row("OBJ-BS-2", "000001.SZ", "2024-12-31", inventories=150, tot_assets=1200),
+            _row("OBJ-BS-1", "000001.SZ", "2023-12-31", inventories=100, acct_rcv=50, tot_assets=1000),
+            _row("OBJ-BS-2", "000001.SZ", "2024-12-31", inventories=150, acct_rcv=55, tot_assets=1200),
             _row("OBJ-BS-3", "000002.SZ", "2024-12-31", inventories=200, tot_assets=1500),
         ],
     )
@@ -38,7 +38,7 @@ def financial_index(monkeypatch):
         normalized / "cashflows.jsonl",
         [
             _row("OBJ-CF-1", "000001.SZ", "2023-12-31", net_cash_flows_oper_act=40),
-            _row("OBJ-CF-2", "000001.SZ", "2024-12-31", net_cash_flows_oper_act=55),
+            _row("OBJ-CF-2", "000001.SZ", "2024-12-31", net_cash_flows_oper_act=20),
             _row("OBJ-CF-3", "000002.SZ", "2024-12-31", net_cash_flows_oper_act=65),
         ],
     )
@@ -161,18 +161,55 @@ def test_metric_compare_rejects_mixed_ytd_period_types(financial_index) -> None:
     assert "matching period types" in result.error.message
 
 
-def test_risk_scan_is_explicitly_unsupported(financial_index) -> None:
+def test_risk_scan_returns_triggered_not_triggered_and_skipped_rules(financial_index) -> None:
     result = financial_analysis(
         _call(
             {
                 "operation": "risk_scan",
                 "company_ids": ["000001.SZ"],
-                "report_periods": ["2024-12-31"],
+                "report_periods": ["2023-12-31", "2024-12-31"],
+            }
+        )
+    )
+    assert result.status.value == "success"
+    by_rule = {item["rule_id"]: item for item in result.data["signals"]}
+    assert by_rule["CASH_PROFIT_DIVERGENCE"]["status"] == "triggered"
+    assert by_rule["INVENTORY_REVENUE_DIVERGENCE"]["status"] == "triggered"
+    assert by_rule["RECEIVABLE_REVENUE_DIVERGENCE"]["status"] == "not_triggered"
+    assert by_rule["LIQUIDITY_PRESSURE"]["status"] == "insufficient_data"
+    assert result.data["rule_version"] == "financial-risk-rules-v1"
+    assert result.data["coverage"]["evaluated_rule_count"] == 3
+    assert result.evidence
+
+
+def test_risk_scan_can_select_rules(financial_index) -> None:
+    result = financial_analysis(
+        _call(
+            {
+                "operation": "risk_scan",
+                "company_ids": ["000001.SZ"],
+                "report_periods": ["2023-12-31", "2024-12-31"],
+                "rule_ids": ["CASH_PROFIT_DIVERGENCE"],
+            }
+        )
+    )
+    assert result.status.value == "success"
+    assert [item["rule_id"] for item in result.data["signals"]] == ["CASH_PROFIT_DIVERGENCE"]
+
+
+def test_risk_scan_rejects_noncomparable_periods(financial_index) -> None:
+    result = financial_analysis(
+        _call(
+            {
+                "operation": "risk_scan",
+                "company_ids": ["000001.SZ"],
+                "report_periods": ["2024-12-31", "2025-03-31"],
             }
         )
     )
     assert result.status.value == "failed"
-    assert result.error.error_type.value == "UNSUPPORTED_QUERY"
+    assert result.error.error_type.value == "INVALID_ARGUMENT"
+    assert "same period type" in result.error.message
 
 
 def test_missing_financial_index_returns_build_instruction(monkeypatch) -> None:

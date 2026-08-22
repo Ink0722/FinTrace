@@ -66,6 +66,30 @@ def validate_action(action: AgentAction, state: AgentState, resolver: EntityReso
         if n_companies < 1 or n_periods < 1:
             errors.append("metric_compare requires company_ids and report_periods")
 
+    if action.capability == "financial_risk_scan":
+        if len(arguments.get("company_ids") or []) != 1:
+            errors.append("risk_scan requires exactly one company_id")
+        if len(arguments.get("report_periods") or []) < 2:
+            errors.append("risk_scan requires at least two report_periods")
+
+    if action.capability == "ownership_penetration":
+        target = str(arguments.get("target_entity_id") or "")
+        if not WINDCODE.match(target):
+            errors.append("penetration target_entity_id must be a canonical company code")
+        elif state.parsed_request and target not in state.parsed_request.entities:
+            errors.append("penetration target_entity_id must come from the parsed request")
+        if not str(arguments.get("source_entity_id") or "").strip():
+            errors.append("penetration requires source_entity_id")
+        if not arguments.get("as_of_date"):
+            errors.append("penetration requires as_of_date")
+        try:
+            if int(arguments.get("max_depth", 4)) > 6:
+                errors.append("penetration max_depth exceeds 6")
+            if int(arguments.get("max_paths", 10)) > 50:
+                errors.append("penetration max_paths exceeds 50")
+        except (TypeError, ValueError):
+            errors.append("penetration bounds must be integers")
+
     for slot in capability.required_slots:
         if slot == "company_ids_or_holder_ids":
             if not arguments.get("company_ids") and not arguments.get("holder_ids"):

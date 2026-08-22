@@ -16,6 +16,45 @@ from tools.financial_analysis.evidence import build_financial_evidence
 from tools.financial_analysis.metric_catalog import METRIC_CATALOG, period_type
 from tools.financial_analysis.query import build_metric_query_result, find_missing_combinations
 from tools.financial_analysis.repository import FinancialRepository, validate_index_snapshot
+from tools.financial_analysis.risk_catalog import RISK_RULES, select_rules
+from tools.financial_analysis.risk_scan import run_risk_scan
+
+
+class RiskScanArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["risk_scan"]
+    query: str | None = None
+    company_ids: list[str] = Field(min_length=1, max_length=1)
+    report_periods: list[date] = Field(min_length=2)
+    rule_ids: list[str] | None = None
+    focus_topics: list[str] | None = None
+    knowledge_cutoff: date | None = None
+
+    @field_validator("company_ids")
+    @classmethod
+    def normalize_companies(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip().upper() for value in values]
+        if any(not value for value in normalized):
+            raise ValueError("company_ids must not contain blanks")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_rules_and_periods(self) -> "RiskScanArguments":
+        periods = [value.isoformat() for value in self.report_periods]
+        if len(periods) != len(set(periods)):
+            raise ValueError("report_periods must not contain duplicates")
+        period_types = {period_type(value) for value in periods}
+        if len(period_types) != 1 or "NON_STANDARD" in period_types:
+            raise ValueError("risk_scan requires comparable report periods of the same period type")
+        unknown = sorted(set(self.rule_ids or []) - set(RISK_RULES))
+        if unknown:
+            raise ValueError(f"unsupported rule_ids: {unknown}")
+        if self.rule_ids and self.focus_topics:
+            raise ValueError("provide rule_ids or focus_topics, not both")
+        if not select_rules(self.rule_ids, self.focus_topics):
+            raise ValueError("no risk rules matched focus_topics")
+        return self
 
 
 class FinancialAnalysisArguments(BaseModel):
@@ -85,12 +124,7 @@ class FinancialAnalysisArguments(BaseModel):
 def financial_analysis(call: ToolCall) -> ToolResult:
     started = time.perf_counter()
     if call.arguments.get("operation") == "risk_scan":
-        return _failed(
-            call,
-            started,
-            ErrorType.UNSUPPORTED_QUERY,
-            "risk_scan is not implemented in the current financial_analysis version.",
-        )
+        return _execute_risk_scan(call, started)
     try:
         arguments = FinancialAnalysisArguments.model_validate(call.arguments)
         config = FinancialAnalysisConfig.from_env()
@@ -243,6 +277,39 @@ def financial_analysis(call: ToolCall) -> ToolResult:
         warnings=list(dict.fromkeys(warnings)),
         metrics=ToolMetrics(execution_time_ms=_elapsed_ms(started)),
     )
+
+
+def _execute_risk_scan(call: ToolCall, started: float) -> ToolResult:
+    try:
+        arguments = RiskScanArguments.model_validate(call.arguments)
+        config = FinancialAnalysisConfig.from_env()
+    except (ValidationError, TypeError, ValueError) as exc:
+        return _failed(call, started, ErrorType.INVALID_ARGUMENT, f"Invalid risk_scan arguments or configuration: {exc}", details={"arguments": call.arguments})
+    repository = FinancialRepository(config.index_path)
+    if not repository.available():
+        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, f"Financial metric index not found: {config.index_path}", details={"build_command": "python -m data_pipeline.financial.build_index"})
+    snapshot_errors = validate_index_snapshot(config.index_path, config.normalized_dir)
+    if snapshot_errors:
+        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "Financial metric index is stale or incomplete; rebuild it from normalized data.", details={"errors": snapshot_errors, "build_command": "python -m data_pipeline.financial.build_index"})
+    rules = select_rules(arguments.rule_ids, arguments.focus_topics)
+    metric_codes = sorted({metric for rule in rules for metric in rule.required_metrics})
+    periods = [value.isoformat() for value in arguments.report_periods]
+    try:
+        records = repository.query_metrics(company_ids=arguments.company_ids, report_periods=periods, metric_codes=metric_codes, knowledge_cutoff=arguments.knowledge_cutoff)
+    except sqlite3.Error as exc:
+        return _failed(call, started, ErrorType.TEMPORARY_DATABASE_ERROR, f"Financial metric index query failed: {type(exc).__name__}: {exc}", retryable=isinstance(exc, sqlite3.OperationalError))
+    if not records:
+        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "No financial metrics matched the requested company, periods and cutoff.")
+    data = run_risk_scan(company_id=arguments.company_ids[0], periods=periods, records=records, rules=rules)
+    data["knowledge_cutoff"] = arguments.knowledge_cutoff.isoformat() if arguments.knowledge_cutoff else None
+    data["record_count"] = len(records)
+    data["message"] = "financial_analysis risk_scan completed"
+    warnings = []
+    if arguments.knowledge_cutoff is None:
+        warnings.append("knowledge_cutoff was not provided; results use all disclosures available in the normalized snapshot.")
+    if data["rules_skipped"]:
+        warnings.append(f"{len(data['rules_skipped'])} risk rules were skipped because required inputs are missing.")
+    return ToolResult(tool_call_id=call.tool_call_id, tool_name=ToolName.FINANCIAL_ANALYSIS, status=ToolStatus.SUCCESS, data=data, evidence=build_financial_evidence(records, used_by=call.tool_call_id), warnings=warnings, metrics=ToolMetrics(execution_time_ms=_elapsed_ms(started)))
 
 
 def _failed(

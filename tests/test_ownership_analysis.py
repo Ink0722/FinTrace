@@ -5,6 +5,8 @@ from uuid import uuid4
 
 import pytest
 
+from data_pipeline.entity_resolution.build_index import build_entity_index
+from data_pipeline.entity_resolution.build_company_universe import build_company_universe
 from data_pipeline.ownership.build_index import build_ownership_index
 from schemas.enums import ToolName
 from schemas.tool_calls import ToolCall
@@ -21,9 +23,18 @@ def ownership_index(monkeypatch):
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in _dataset()),
         encoding="utf-8",
     )
-    manifest = build_ownership_index(normalized, index_path)
+    (normalized / "research_reports.jsonl").write_text(
+        json.dumps({"sec_code": "000002", "sec_name": "甲投资有限公司"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    entity_index_path = root / "indexes" / "entity_master.sqlite"
+    universe_path = root / "processed" / "company_universe.jsonl"
+    build_company_universe(normalized, universe_path)
+    build_entity_index(normalized, entity_index_path, None, universe_path)
+    manifest = build_ownership_index(normalized, index_path, entity_index_path)
     monkeypatch.setenv("FINTRACE_OWNERSHIP_NORMALIZED_DIR", str(normalized))
     monkeypatch.setenv("FINTRACE_OWNERSHIP_INDEX_PATH", str(index_path))
+    monkeypatch.setenv("FINTRACE_ENTITY_INDEX_PATH", str(entity_index_path))
     try:
         yield index_path, manifest
     finally:
@@ -42,7 +53,8 @@ def test_build_ownership_index_manifest(ownership_index) -> None:
     entities = manifest["entities"]
     assert entities["resolved"] == 3  # PERSON:P0001, PERSON:P0003, COMPANY:C0001
     assert entities["unresolved"] == 13  # 李四 + 11 extended-roster holders + 赵六
-    assert manifest["mapping_version"] == "ownership-holdings-v1"
+    assert manifest["mapping_version"] == "ownership-holdings-v3"
+    assert manifest["holder_company_links"] == 1
 
 
 def test_holding_query_latest_snapshot_forward(ownership_index) -> None:
@@ -171,19 +183,60 @@ def test_holding_query_unknown_company(ownership_index) -> None:
     assert result.error.error_type.value == "DATA_NOT_AVAILABLE"
 
 
-def test_penetration_is_explicitly_unsupported(ownership_index) -> None:
+def test_penetration_returns_direct_and_multihop_paths(ownership_index) -> None:
     result = ownership_analysis(
         _call(
             {
                 "operation": "penetration",
-                "source_entity_id": "PERSON-001",
+                "source_entity_id": "PERSON:P0001",
                 "target_entity_id": "000001.SZ",
-                "as_of_date": "2024-12-31",
+                "as_of_date": "2025-02-01",
+                "knowledge_cutoff": "2025-02-01",
+            }
+        )
+    )
+    assert result.status.value == "success"
+    assert [path["depth"] for path in result.data["paths"]] == [1, 2]
+    direct, indirect = result.data["paths"]
+    assert direct["path_ratio"] == pytest.approx(0.14)
+    assert [node["entity_id"] for node in indirect["nodes"]] == [
+        "PERSON:P0001", "000002.SZ", "000001.SZ"
+    ]
+    assert indirect["path_ratio"] == pytest.approx(0.05 * 0.13)
+    assert len(indirect["evidence_ids"]) == 2
+    assert result.evidence
+
+
+def test_penetration_no_path_returns_coverage_warning(ownership_index) -> None:
+    result = ownership_analysis(
+        _call(
+            {
+                "operation": "penetration",
+                "source_entity_id": "PERSON:P0003",
+                "target_entity_id": "000002.SZ",
+                "as_of_date": "2025-02-01",
+            }
+        )
+    )
+    assert result.status.value == "success"
+    assert result.data["paths"] == []
+    assert any("does not prove" in warning for warning in result.warnings)
+
+
+def test_penetration_rejects_unbounded_depth(ownership_index) -> None:
+    result = ownership_analysis(
+        _call(
+            {
+                "operation": "penetration",
+                "source_entity_id": "PERSON:P0001",
+                "target_entity_id": "000001.SZ",
+                "as_of_date": "2025-02-01",
+                "max_depth": 99,
             }
         )
     )
     assert result.status.value == "failed"
-    assert result.error.error_type.value == "UNSUPPORTED_QUERY"
+    assert result.error.error_type.value == "INVALID_ARGUMENT"
 
 
 def test_holding_compare_entered_exited_and_changes(ownership_index) -> None:

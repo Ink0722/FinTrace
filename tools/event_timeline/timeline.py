@@ -1,3 +1,4 @@
+import hashlib
 from datetime import date
 
 from schemas.event import EventCluster, EventRecord
@@ -60,7 +61,9 @@ def cluster_events(events: list[EventRecord], window_days: int = 30) -> list[Eve
         else:
             clusters.append(
                 EventCluster(
-                    cluster_id=f"CLUSTER-{len(clusters) + 1:03d}",
+                    cluster_id="CLUSTER-" + hashlib.sha256(
+                        f"{event.company_id}|{event.event_type}|{event.event_id}".encode("utf-8")
+                    ).hexdigest()[:16].upper(),
                     company_id=event.company_id,
                     event_type=event.event_type,
                     start_date=event.event_date,
@@ -95,9 +98,11 @@ def evidence_from_clusters(clusters: list[EventCluster], used_by: str) -> list[E
                         "event_id": event.event_id,
                         "event_type": event.event_type,
                         "event_date": event.event_date.isoformat(),
+                        "announcement_date": event.announcement_date.isoformat() if event.announcement_date else None,
                         "title": event.title,
                         "summary": event.summary,
                         "entities": event.entities,
+                        "extraction_method": event.extraction_method,
                     },
                     used_by=[used_by],
                 )

@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.action_repair
-version: 1.1.0
+version: 1.2.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -48,12 +48,22 @@ output_schema: ActionRepairResult
 7. 如果必须获得用户输入，返回 `clarification_required`。
 8. 如果不存在安全的局部修复方案，返回 `non_repairable`。
 
+【专项修复边界】
+
+- `risk_scan` 报告期不足、期间类型不一致或目标公司不唯一：不得补造或删除用户指定期间来制造可执行形状；需要用户决定时返回 `clarification_required`，维度本身选错时返回 `replan_required`。
+- `penetration` 缺少起点主体、目标公司或观察日：不得猜测，返回 `clarification_required`。
+- 穿透起点名称存在多个候选：不得选择第一个候选，返回 `clarification_required`。
+- `target_entity_id` 不属于 ParsedRequest 已解析公司：不得接受或替换为其他公司，返回 `replan_required`。
+- `max_depth > 6` 或 `max_paths > 50`：只有 Capability Definition 明确给出上限时，允许缩减到合法上限并返回 `repaired`。
+- `event_query` 错带 `window_days`：若原意仍是查询事件，可删除该参数；若用户明确要求聚类，应返回 `replan_required`，不得在 Repair 中静默切换 operation。
+- 索引缺失、索引过期、数据源不可用或查询空结果不属于参数修复，不得重复提交相同调用；返回 `non_repairable` 或交由 Planner 选择其他证据来源。
+- 任何情况下都不得修改 `knowledge_cutoff`，也不得通过放宽日期绕过防前视约束。
+
 【输出】
 严格返回一个 JSON 对象：
 
 {
   "status": "repaired | replan_required | clarification_required | non_repairable",
-  "error_class": "string",
   "repaired_action": {} or null,
   "reason": "one concise explanation of the repair decision"
 }
