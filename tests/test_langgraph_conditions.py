@@ -42,7 +42,7 @@ def test_investigation_loop_respects_budget(monkeypatch) -> None:
     assert state.routing_mode == "investigation"
     assert state.total_tool_calls <= state.max_total_tool_calls
     assert state.step_count <= state.max_steps + 1
-    assert state.termination_reason in {"non_retryable_tool_failure", "no_new_evidence", "budget_exhausted", None}
+    assert state.termination_reason in {"no_new_evidence", "budget_exhausted", None}
     # Without a configured LLM the turn ends in the structured-error branch.
     assert state.answer_status in {"insufficient_evidence", "failed"}
 

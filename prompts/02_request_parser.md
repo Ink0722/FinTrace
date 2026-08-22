@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.request_parser
-version: 1.3.0
+version: 1.5.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -68,6 +68,8 @@ output_schema: ParsedRequest
 
 槽位保留规则：
 - 财务风险调查必须保留所有明确报告期和 `focus_topics`；不得把多个期间压缩为一个范围字符串。
+- `focus_topics` 只允许 `asset_quality`、`earnings_quality`、`profitability`、`solvency`。泛称“金融风险/财务风险”表示不限定规则主题，应返回空数组，不能原样写入。
+- 用户没有明确报告期时，`periods` 和 `requested_periods` 必须为空；用户只说一个期间时原样保留一个。后续确定性期间解析器负责查询可用历史，Parser不得根据示例、当前年份、模型记忆或数据覆盖范围补造期间，也不得仅因风险问题未给期间而加入必须澄清项。
 - 股权穿透必须分别保留目标上市公司到 `entities`、起点人物/股东名称到 `people`、观察日期到 `as_of_dates` 或日期字段。缺少任一项时写入 `missing_slots`，不得虚构主体 ID 或日期。
 - “截至某日”“在某日的股权关系”表示观察时点，不得误写为财务报告期。
 - 事件查询必须保留用户明确给出的事件类型和日期范围；不得因为多个事件相关就自行认定其属于同一事件簇。

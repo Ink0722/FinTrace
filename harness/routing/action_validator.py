@@ -69,8 +69,19 @@ def validate_action(action: AgentAction, state: AgentState, resolver: EntityReso
     if action.capability == "financial_risk_scan":
         if len(arguments.get("company_ids") or []) != 1:
             errors.append("risk_scan requires exactly one company_id")
-        if len(arguments.get("report_periods") or []) < 2:
-            errors.append("risk_scan requires at least two report_periods")
+        if len(arguments.get("report_periods") or []) < 1:
+            errors.append("risk_scan requires at least one resolved report_period")
+        if state.parsed_request:
+            parsed_periods = state.parsed_request.periods
+            action_periods = arguments.get("report_periods") or []
+            if not parsed_periods:
+                errors.append("risk_scan report_periods must come from the deterministic period resolver; planner cannot invent defaults")
+            elif action_periods != parsed_periods:
+                errors.append("risk_scan report_periods must exactly match the deterministic period resolution")
+            allowed_topics = {"asset_quality", "earnings_quality", "profitability", "solvency"}
+            invalid_topics = sorted(set(arguments.get("focus_topics") or []) - allowed_topics)
+            if invalid_topics:
+                errors.append(f"risk_scan contains unsupported focus_topics: {invalid_topics}")
 
     if action.capability == "ownership_penetration":
         target = str(arguments.get("target_entity_id") or "")

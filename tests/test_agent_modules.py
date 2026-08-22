@@ -205,6 +205,26 @@ def test_validate_action_rejects_ambiguous_compare_dimension() -> None:
     assert any("ambiguous dimension" in error for error in errors)
 
 
+def test_validate_action_rejects_planner_invented_risk_periods_and_topics() -> None:
+    parsed = ParsedRequest(
+        raw_query="分析600519.SH的金融风险", entities=["600519.SH"],
+        task_family="financial_investigation",
+    )
+    state = make_state(parsed)
+    action = AgentAction(
+        action="call_tool", capability="financial_risk_scan",
+        tool_name="financial_analysis", operation="risk_scan",
+        arguments={
+            "operation": "risk_scan", "company_ids": ["600519.SH"],
+            "report_periods": ["2020-12-31", "2024-12-31"],
+            "focus_topics": ["金融风险"],
+        }, reason="test",
+    )
+    errors = validate_action(action, state, resolver=EntityResolver())
+    assert any("deterministic period resolver" in error for error in errors)
+    assert any("unsupported focus_topics" in error for error in errors)
+
+
 def test_validate_action_normalizes_company_names() -> None:
     state = make_state()
     action = AgentAction(

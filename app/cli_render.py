@@ -87,7 +87,11 @@ def print_request_summary(state: dict) -> None:
     print(LINE)
     _field("主体", _join(parsed.get("entities") or context.get("company_ids")) or "未识别")
     _field("任务", TASK_LABELS.get(parsed.get("task_family"), parsed.get("task_family") or "未识别"))
-    _field("报告期", _join(parsed.get("periods")) or "未指定")
+    requested_periods = parsed.get("requested_periods") or []
+    _field("用户目标期间", _join(requested_periods) or "未指定")
+    _field("实际计算期间", _join(parsed.get("periods")) or "未解析")
+    if parsed.get("period_resolution_mode") not in {None, "not_required"}:
+        _field("期间选择方式", _period_resolution_label(parsed.get("period_resolution_mode")))
     if _date_range(parsed):
         _field("时间范围", _date_range(parsed))
     _field("财务指标", _metric_names(parsed.get("metrics")) or "无")
@@ -142,12 +146,20 @@ def print_arguments(arguments: dict[str, Any], *, indent: int = 0) -> None:
         "start_date": "开始日期", "end_date": "结束日期", "document_types": "文档类型",
         "event_types": "事件类型", "query": "问题/检索词", "mode": "检索模式", "top_k": "返回数量",
         "claim_types": "观点类型", "institutions": "机构", "topics": "观点主题", "limit": "返回数量",
+        "requested_periods": "用户目标期间", "target_period": "目标期间",
+        "period_resolution_mode": "期间选择方式",
     }
     visible = [(labels.get(key, key), value) for key, value in arguments.items() if key not in {"operation", "knowledge_cutoff"}]
     if not visible:
         _field("参数", "无额外参数", indent=indent)
     for label, value in visible:
-        _field(label, _metric_names(value) if label == "指标" else _display(value), indent=indent)
+        if label == "指标":
+            value = _metric_names(value)
+        elif label == "期间选择方式":
+            value = _period_resolution_label(value)
+        else:
+            value = _display(value)
+        _field(label, value, indent=indent)
 
 
 def render_tool_result(tool_name: str, result: dict, *, indent: int) -> None:
@@ -407,6 +419,16 @@ def _risk_observation_detail(observation: dict) -> str:
 def _date_range(parsed: dict) -> str:
     start, end = parsed.get("start_date"), parsed.get("end_date")
     return f"{start} 至 {end}" if start and end else start or end or _join(parsed.get("as_of_dates"))
+
+
+def _period_resolution_label(mode: str | None) -> str:
+    return {
+        "explicit": "严格使用用户指定期间",
+        "history_until_target": "采用截至目标期间的全部同口径历史",
+        "all_available_fy": "采用截止日前全部可用年度",
+        "all_available_comparable": "无年度数据，采用数据最多的同口径期间",
+        "data_unavailable": "财务期间索引不可用",
+    }.get(mode or "", mode or "未说明")
 
 
 def _join(values: Any) -> str:

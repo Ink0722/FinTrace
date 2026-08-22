@@ -2,7 +2,7 @@ import json
 
 from app import cli
 from app.cli import format_final_answer, main
-from app.cli_render import render_tool_result
+from app.cli_render import print_arguments, print_request_summary, render_tool_result
 
 
 def test_format_final_answer_unwraps_qwen_json() -> None:
@@ -180,6 +180,30 @@ def test_risk_scan_is_rendered_without_raw_json(capsys) -> None:
     assert "2023-12-31 -> 2024-12-31" in output
     assert "利润增速=20.00%" in output
     assert "{'rule_id'" not in output
+
+
+def test_financial_period_resolution_is_rendered_in_plain_language(capsys) -> None:
+    print_request_summary({
+        "turn_id": 1,
+        "knowledge_cutoff": "2025-04-30",
+        "parsed_request": {
+            "entities": ["600519.SH"],
+            "task_family": "financial_investigation",
+            "requested_periods": ["2024-12-31"],
+            "periods": ["2023-12-31", "2024-12-31"],
+            "period_resolution_mode": "history_until_target",
+        },
+    })
+    print_arguments({
+        "report_periods": ["2023-12-31", "2024-12-31"],
+        "requested_periods": ["2024-12-31"],
+        "period_resolution_mode": "history_until_target",
+    })
+    output = capsys.readouterr().out
+    assert "用户目标期间" in output
+    assert "实际计算期间" in output
+    assert "采用截至目标期间的全部同口径历史" in output
+    assert "period_resolution_mode" not in output
 
 
 def test_penetration_path_is_rendered_hop_by_hop(capsys) -> None:

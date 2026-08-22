@@ -15,11 +15,19 @@ def run_risk_scan(*, company_id: str, periods: list[str], records: list[Financia
         }
     signals = [evaluate_rule(rule, series, ordered_periods) for rule in rules]
     evaluated = [item["rule_id"] for item in signals if item["status"] in {"triggered", "not_triggered"}]
-    skipped = [
-        {"rule_id": item["rule_id"], "reason": "missing_inputs", "missing_inputs": item["missing_inputs"]}
-        for item in signals
-        if item["status"] == "insufficient_data"
-    ]
+    skipped = []
+    for item in signals:
+        if item["status"] != "insufficient_data":
+            continue
+        minimum_periods_not_met = any(
+            observation.get("insufficient_reason") == "minimum_periods_not_met"
+            for observation in item["observations"]
+        ) or not item["observations"]
+        skipped.append({
+            "rule_id": item["rule_id"],
+            "reason": "minimum_periods_not_met" if minimum_periods_not_met else "missing_inputs",
+            "missing_inputs": item["missing_inputs"],
+        })
     not_applicable = [
         {"rule_id": item["rule_id"], "reason": "rule_not_applicable", "observations": item["observations"]}
         for item in signals

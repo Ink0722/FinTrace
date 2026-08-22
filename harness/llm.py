@@ -1,4 +1,6 @@
 import os
+import json
+from collections.abc import Iterator
 from typing import Any
 
 import requests
@@ -62,6 +64,33 @@ class QwenClient:
         )
         response.raise_for_status()
         return response.json()
+
+    def chat_json_stream(self, messages: list[dict[str, str]], temperature: float = 0.0) -> Iterator[str]:
+        """Yield OpenAI-compatible content deltas while preserving JSON mode."""
+        if not self.enabled:
+            return
+        messages = self._ensure_json_keyword(messages)
+        with requests.post(
+            f"{self.base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            json={
+                "model": self.model, "messages": messages, "temperature": temperature,
+                "response_format": {"type": "json_object"}, "stream": True,
+            },
+            timeout=120,
+            stream=True,
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines(decode_unicode=True):
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                payload = json.loads(data)
+                delta = payload.get("choices", [{}])[0].get("delta", {}).get("content")
+                if delta:
+                    yield str(delta)
 
     @staticmethod
     def _ensure_json_keyword(messages: list[dict[str, str]]) -> list[dict[str, str]]:

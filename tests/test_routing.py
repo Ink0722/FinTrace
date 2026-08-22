@@ -44,6 +44,23 @@ def test_parse_flags_investigation_and_explanation() -> None:
     assert parsed.task_family in {"financial_metric_query", "financial_investigation"}
 
 
+def test_financial_risk_without_periods_does_not_require_user_clarification() -> None:
+    parsed = parse_request("分析一下600519.SH的金融风险", resolver=RESOLVER)
+    assert parsed.task_family == "financial_investigation"
+    assert parsed.parsed_by == "rule"
+    assert parsed.periods == []
+    assert parsed.focus_topics == []
+    pre = check_answerability(parsed)
+    assert pre.status == "routeable"
+
+
+def test_risk_focus_topics_use_rule_catalog_vocabulary() -> None:
+    inventory = parse_request("分析600519.SH 2023年和2024年的存货风险", resolver=RESOLVER)
+    cashflow = parse_request("分析600519.SH 2023年和2024年的现金流风险", resolver=RESOLVER)
+    assert inventory.focus_topics == ["asset_quality"]
+    assert cashflow.focus_topics == ["earnings_quality"]
+
+
 def test_parse_realtime_and_prediction_families() -> None:
     assert parse_request("股价现在多少", resolver=RESOLVER).requires_realtime
     assert parse_request("明年会涨吗", resolver=RESOLVER).requires_prediction

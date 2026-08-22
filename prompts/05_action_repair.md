@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.action_repair
-version: 1.2.0
+version: 1.3.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -50,7 +50,7 @@ output_schema: ActionRepairResult
 
 【专项修复边界】
 
-- `risk_scan` 报告期不足、期间类型不一致或目标公司不唯一：不得补造或删除用户指定期间来制造可执行形状；需要用户决定时返回 `clarification_required`，维度本身选错时返回 `replan_required`。
+- `risk_scan` 没有已解析期间、期间类型不一致或目标公司不唯一：不得补造、删除或替换期间来制造可执行形状。期间解析失败应重新规划或按数据不足结束；只有主体或比较维度确实存在多个合理解释时才返回 `clarification_required`。
 - `penetration` 缺少起点主体、目标公司或观察日：不得猜测，返回 `clarification_required`。
 - 穿透起点名称存在多个候选：不得选择第一个候选，返回 `clarification_required`。
 - `target_entity_id` 不属于 ParsedRequest 已解析公司：不得接受或替换为其他公司，返回 `replan_required`。

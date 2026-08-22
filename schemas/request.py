@@ -42,6 +42,13 @@ class ParsedRequest(BaseModel):
     entity_candidates: list[EntityCandidate] = Field(default_factory=list)
     people: list[str] = Field(default_factory=list)  # holder/person names (unresolved terms)
     periods: list[str] = Field(default_factory=list)  # report periods, ISO dates
+    requested_periods: list[str] = Field(default_factory=list)  # periods explicitly stated by the user
+    target_period: str | None = None
+    period_type: str | None = None
+    period_resolution_mode: Literal[
+        "not_required", "explicit", "history_until_target", "all_available_fy",
+        "all_available_comparable", "data_unavailable"
+    ] = "not_required"
     as_of_dates: list[str] = Field(default_factory=list)  # ownership observation points
     start_date: str | None = None
     end_date: str | None = None

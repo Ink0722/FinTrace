@@ -81,6 +81,27 @@ class FinancialRepository:
             rows = connection.execute(sql, params).fetchall()
         return [_row_to_record(row) for row in rows]
 
+    def list_available_periods(
+        self,
+        *,
+        company_id: str,
+        knowledge_cutoff: date | None = None,
+    ) -> list[tuple[str, str]]:
+        clauses = ["company_id = ?"]
+        params = [company_id]
+        if knowledge_cutoff:
+            clauses.append("announcement_date <= ?")
+            params.append(knowledge_cutoff.isoformat())
+        sql = f"""
+            SELECT report_period, period_type
+            FROM financial_metrics
+            WHERE {' AND '.join(clauses)}
+            GROUP BY report_period, period_type
+            ORDER BY report_period
+        """
+        with sqlite3.connect(self.index_path) as connection:
+            return [(str(row[0]), str(row[1])) for row in connection.execute(sql, params).fetchall()]
+
 
 def validate_index_snapshot(index_path: Path, normalized_dir: Path) -> list[str]:
     manifest_path = index_path.with_name("manifest.json")

@@ -23,6 +23,8 @@ ENV/
 # Build and packaging artifacts
 build/
 dist/
+node_modules/
+.next/
 *.egg-info/
 
 # Logs and runtime output
@@ -50,12 +52,11 @@ data/*
 *.sqlite
 *.db
 
-# Generated evaluation traces
-evaluation/reports/*.jsonl
-!evaluation/reports/.gitkeep
-evaluation/runs/*.jsonl
-evaluation/runs/*.lock
-!evaluation/runs/.gitkeep
+# Generated evaluation runtime store and exports
+evaluation/runtime/*.sqlite3
+evaluation/runtime/*.sqlite3-shm
+evaluation/runtime/*.sqlite3-wal
+evaluation/exports/*.jsonl
 
 # Office/editor temporary files
 ~$*

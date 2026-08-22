@@ -26,7 +26,12 @@ class RiskScanArguments(BaseModel):
     operation: Literal["risk_scan"]
     query: str | None = None
     company_ids: list[str] = Field(min_length=1, max_length=1)
-    report_periods: list[date] = Field(min_length=2)
+    report_periods: list[date] = Field(min_length=1)
+    requested_periods: list[date] = Field(default_factory=list)
+    target_period: date | None = None
+    period_resolution_mode: Literal[
+        "not_required", "explicit", "history_until_target", "all_available_fy", "data_unavailable"
+    ] = "not_required"
     rule_ids: list[str] | None = None
     focus_topics: list[str] | None = None
     knowledge_cutoff: date | None = None
@@ -302,6 +307,9 @@ def _execute_risk_scan(call: ToolCall, started: float) -> ToolResult:
         return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "No financial metrics matched the requested company, periods and cutoff.")
     data = run_risk_scan(company_id=arguments.company_ids[0], periods=periods, records=records, rules=rules)
     data["knowledge_cutoff"] = arguments.knowledge_cutoff.isoformat() if arguments.knowledge_cutoff else None
+    data["requested_periods"] = [value.isoformat() for value in arguments.requested_periods]
+    data["target_period"] = arguments.target_period.isoformat() if arguments.target_period else None
+    data["period_resolution_mode"] = arguments.period_resolution_mode
     data["record_count"] = len(records)
     data["message"] = "financial_analysis risk_scan completed"
     warnings = []

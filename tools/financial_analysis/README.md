@@ -199,7 +199,7 @@ announcement_date <= knowledge_cutoff
 
 ## `risk_scan`
 
-对单一公司至少两个同口径期间执行版本化确定性风险规则。v2按相邻期间或单个期间分别生成观察值，不再只比较首尾期间。示例：
+对单一公司至少一个报告期执行版本化确定性风险规则。v2按相邻期间或单个期间分别生成观察值：有多个可比期间时执行跨期规则，只有一个期间时仍执行点时规则并将跨期规则标为数据不足。示例：
 
 ```json
 {
@@ -234,6 +234,12 @@ announcement_date <= knowledge_cutoff
 部分期间缺失不会抹掉其他可评估期间；输出保留每段 `observations`、缺失输入和实际使用的 Evidence。严重程度综合阈值超出幅度与连续触发次数，但不等于现实损失程度。
 
 当前阈值标记为 `expert_initial / uncalibrated`。数据没有冻结行业分类，且独立人工风险金标尚未完成，因此暂不构造行业阈值或综合评分；输出固定包含 `overall_score=null` 和 `scoring_status=disabled_until_calibrated`。
+
+期间分为用户目标和实际计算范围。用户指定一个期间时，确定性期间解析器从SQLite选择截至目标期间的全部同口径历史；用户未指定时，优先使用 `knowledge_cutoff` 前该公司全部可用年度，没有年度数据则选择数据最多的一组同口径中报或季报。多个明确期间严格按用户输入执行，不混合不同累计口径。Planner不得选择年份，工具参数必须与期间解析结果完全一致。
+
+输出通过 `requested_periods`、`periods_used`、`target_period` 和 `period_resolution_mode` 公开该过程。无期间数据属于数据不可得，不应反问用户提供数据库不存在的年份。
+
+只有一个可用期间时仍运行点时规则；跨期规则和要求连续多期的规则返回 `insufficient_data`，不会把“无法判断”误写成“未触发”。
 
 ### Agent调查顺序
 

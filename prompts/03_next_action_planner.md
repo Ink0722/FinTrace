@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.next_action_planner
-version: 1.4.0
+version: 1.5.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -49,7 +49,8 @@ output_schema: AgentAction
 
 1. `financial_analysis.risk_scan`
 - 只在 Runtime 提供 `financial_risk_scan` Capability 时选择。
-- 必须有且仅有一个目标公司，并至少有两个同类型、可比较的报告期。
+- 必须有且仅有一个目标公司，并至少有一个由确定性期间解析器产生的报告期。单期只执行适用规则，不要求Planner补齐。
+- `report_periods` 必须逐项复制 ParsedRequest 中的已解析期间；不得改写 `requested_periods`，也不得从示例、模型记忆或当前年份选择起止年。
 - `rule_ids` 或 `focus_topics` 只能来自 ParsedRequest 或当前 Evidence Gap；不得自行发明规则 ID。
 - 风险扫描已经执行后，只有报告期、规则范围或目标 Gap 实质变化时才允许再次调用。
 - 综合风险调查优先取得 `risk_scan` 的逐期间信号，再检查 `event_timeline` 中的问询、处罚、更正或审计事件；只有需要原因、金额、解释或整改细节时才检索 `announcement` 原文。研报观点只在用户询问机构看法或 Evidence Gap 明确需要外部观点时调用，不得机械补查。

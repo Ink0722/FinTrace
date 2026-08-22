@@ -3,8 +3,36 @@ from harness.skills import client_for_skill
 from harness.graph.workflow import run_agent
 from schemas.enums import ToolStatus
 from schemas.tool_results import ToolResult
+from harness.streaming import JsonAnswerDeltaParser
 
 import requests
+
+
+def test_json_answer_delta_parser_hides_json_envelope() -> None:
+    parser = JsonAnswerDeltaParser()
+    chunks = ['{"ans', 'wer":"第一行\\n', '第二行","used_evidence_ids":[]}']
+    deltas = [parser.feed(chunk) for chunk in chunks]
+    assert "".join(deltas) == "第一行\n第二行"
+    assert "answer" not in "".join(deltas)
+
+
+def test_qwen_json_stream_yields_content_deltas(monkeypatch) -> None:
+    monkeypatch.setenv("QWEN_API_KEY", "test-key")
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def raise_for_status(self): return None
+        def iter_lines(self, decode_unicode=False):
+            assert decode_unicode is True
+            return iter([
+                'data: {"choices":[{"delta":{"content":"{\\\"answer\\\":\\\"你"}}]}',
+                'data: {"choices":[{"delta":{"content":"好\\\"}"}}]}',
+                "data: [DONE]",
+            ])
+
+    monkeypatch.setattr("harness.llm.requests.post", lambda *args, **kwargs: Response())
+    assert "".join(QwenClient().chat_json_stream([{"role": "user", "content": "json"}])) == '{"answer":"你好"}'
 
 
 def test_qwen_client_accepts_dashscope_env_names(monkeypatch) -> None:
@@ -67,7 +95,7 @@ def test_llm_timeout_warns_without_crashing(monkeypatch) -> None:
             status=ToolStatus.SUCCESS,
         ),
     )
-    state = run_agent("分析一下示例公司的财务风险", session_id="TEST-LLM-TIMEOUT")
+    state = run_agent("分析示例公司2023年和2024年的财务风险", session_id="TEST-LLM-TIMEOUT")
     assert state.final_answer is not None
     assert "LLM 生成失败" in state.final_answer
     assert "不补充模型推断" in state.final_answer

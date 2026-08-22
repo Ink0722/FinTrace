@@ -25,7 +25,7 @@ def test_skill_registry_files_exist_with_headers() -> None:
 
 def test_action_repair_prompt_matches_output_schema() -> None:
     prompt = load_prompt("05_action_repair.md")
-    assert prompt.version == "1.2.0"
+    assert prompt.version == "1.3.0"
     assert '"error_class"' not in prompt.body
 
 

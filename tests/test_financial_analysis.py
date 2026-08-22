@@ -6,6 +6,8 @@ from uuid import uuid4
 import pytest
 
 from data_pipeline.financial.build_index import build_financial_index
+from harness.routing.financial_period_resolver import resolve_financial_periods
+from schemas.request import ParsedRequest
 from schemas.enums import ToolName
 from schemas.tool_calls import ToolCall
 from tools.financial_analysis.interface import financial_analysis
@@ -186,6 +188,45 @@ def test_risk_scan_returns_triggered_not_triggered_and_skipped_rules(financial_i
     assert result.data["overall_score"] is None
     assert result.data["scoring_status"] == "disabled_until_calibrated"
     assert result.evidence
+
+
+def test_period_resolver_expands_single_target_to_available_history(financial_index) -> None:
+    parsed = ParsedRequest(
+        raw_query="分析000001.SZ在2024年的金融风险", entities=["000001.SZ"],
+        periods=["2024-12-31"], requested_periods=["2024-12-31"],
+        task_family="financial_investigation",
+    )
+    resolved = resolve_financial_periods(parsed, "2025-04-30")
+    assert resolved.requested_periods == ["2024-12-31"]
+    assert resolved.periods == ["2023-12-31", "2024-12-31"]
+    assert resolved.target_period == "2024-12-31"
+    assert resolved.period_resolution_mode == "history_until_target"
+
+
+def test_period_resolver_uses_all_available_fy_when_unspecified(financial_index) -> None:
+    parsed = ParsedRequest(
+        raw_query="分析000001.SZ的金融风险", entities=["000001.SZ"],
+        task_family="financial_investigation",
+    )
+    resolved = resolve_financial_periods(parsed, "2025-04-30")
+    assert resolved.requested_periods == []
+    assert resolved.periods == ["2023-12-31", "2024-12-31"]
+    assert resolved.period_resolution_mode == "all_available_fy"
+
+
+def test_risk_scan_allows_single_period_and_degrades_pair_rules(financial_index) -> None:
+    result = financial_analysis(_call({
+        "operation": "risk_scan", "company_ids": ["000002.SZ"],
+        "report_periods": ["2024-12-31"], "requested_periods": [],
+        "target_period": "2024-12-31", "period_resolution_mode": "all_available_fy",
+    }))
+    assert result.status.value == "success"
+    by_rule = {item["rule_id"]: item for item in result.data["signals"]}
+    assert by_rule["CASH_PROFIT_DIVERGENCE"]["status"] == "insufficient_data"
+    assert by_rule["NEGATIVE_OPERATING_CASHFLOW_PERSISTENCE"]["status"] == "insufficient_data"
+    skipped = {item["rule_id"]: item for item in result.data["rules_skipped"]}
+    assert skipped["NEGATIVE_OPERATING_CASHFLOW_PERSISTENCE"]["reason"] == "minimum_periods_not_met"
+    assert result.data["target_period"] == "2024-12-31"
 
 
 def test_risk_v2_evaluates_each_adjacent_period_pair() -> None:

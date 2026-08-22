@@ -34,7 +34,7 @@ def _action_queue(parsed: ParsedRequest) -> list[AgentAction]:
     entities = parsed.entities
 
     if family in {"financial_investigation", "financial_metric_query", "financial_metric_compare", "unknown"}:
-        if family == "financial_investigation" and len(entities) == 1 and len(parsed.periods) >= 2:
+        if family == "financial_investigation" and len(entities) == 1 and parsed.periods:
             queue.append(_risk_scan_action(parsed))
         if entities and parsed.metrics and parsed.periods:
             queue.append(_metric_query_action(parsed))
@@ -146,6 +146,9 @@ def _risk_scan_action(parsed: ParsedRequest) -> AgentAction:
         "operation": "risk_scan",
         "company_ids": parsed.entities[:1],
         "report_periods": parsed.periods,
+        "requested_periods": parsed.requested_periods,
+        "target_period": parsed.target_period,
+        "period_resolution_mode": parsed.period_resolution_mode,
     }
     if parsed.focus_topics:
         arguments["focus_topics"] = parsed.focus_topics

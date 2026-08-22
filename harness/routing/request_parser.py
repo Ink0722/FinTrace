@@ -39,7 +39,14 @@ REALTIME_MARKERS = ("股价", "市值", "行情", "涨跌幅", "K线", "盘口",
 PREDICTION_MARKERS = ("会涨", "会跌", "能涨", "目标价是多少", "值不值得买", "买入建议", "预测未来", "明年会")
 RESEARCH_MARKERS = ("机构", "券商", "分析师", "研报", "评级", "目标价", "盈利预测", "风险提示")
 RESEARCH_DETAIL_MARKERS = ("原文", "出处", "依据", "理由", "为什么", "详细", "具体怎么说")
+FINANCIAL_RISK_MARKERS = ("金融风险", "财务风险", "风险评估", "风险分析", "财务排雷", "风险扫描")
 INSTITUTION_PATTERN = re.compile(r"([\u4e00-\u9fff]{2,12}(?:证券|研究所|基金))")
+VALID_FOCUS_TOPICS = {"asset_quality", "earnings_quality", "profitability", "solvency"}
+FOCUS_TOPIC_ALIASES = {
+    "inventory": "asset_quality", "receivable": "asset_quality",
+    "cashflow": "earnings_quality", "profit_quality": "earnings_quality",
+    "gross_margin": "profitability",
+}
 
 
 def parse_request(
@@ -64,6 +71,7 @@ def parse_request(
         ],
         people=extraction.holder_names,
         periods=time.periods,
+        requested_periods=time.periods,
         as_of_dates=time.as_of_dates,
         start_date=time.start_date,
         end_date=time.end_date,
@@ -129,6 +137,7 @@ def _infer_task_family(parsed: ParsedRequest, query: str) -> str:
     has_document = any(word in query for word in ("公告", "问询函", "年报", "研报", "原文", "披露", "检索", "查找", "找出"))
     has_event = any(word in query for word in ("事件", "时间线", "处罚", "立案", "违规记录", "警示函", "经过"))
     has_metric = bool(parsed.metrics)
+    has_financial_risk = any(marker in query for marker in FINANCIAL_RISK_MARKERS)
 
     if "穿透" in query:
         return "ownership_penetration"
@@ -140,6 +149,8 @@ def _infer_task_family(parsed: ParsedRequest, query: str) -> str:
         return "event_investigation"
     if has_event:
         return "event_query"
+    if has_financial_risk:
+        return "financial_investigation"
     if has_document and not has_metric:
         return "document_retrieval"
     if has_metric and any(marker in query for marker in COMPARE_MARKERS):
@@ -189,7 +200,7 @@ def _merge_llm_result(parsed: ParsedRequest, llm_parsed: ParsedRequest, resolver
     """LLM output wins for semantics; deterministic entity resolution stays authoritative."""
     parsed.task_family = llm_parsed.task_family if llm_parsed.task_family != "unknown" else parsed.task_family
     parsed.metrics = list(dict.fromkeys(parsed.metrics + llm_parsed.metrics))
-    parsed.focus_topics = list(dict.fromkeys(parsed.focus_topics + llm_parsed.focus_topics))
+    parsed.focus_topics = _normalize_focus_topics(parsed.focus_topics + llm_parsed.focus_topics)
     parsed.document_types = list(dict.fromkeys(parsed.document_types + llm_parsed.document_types))
     parsed.event_types = list(dict.fromkeys(parsed.event_types + llm_parsed.event_types))
     parsed.research_claim_types = list(dict.fromkeys(parsed.research_claim_types + llm_parsed.research_claim_types))
@@ -211,3 +222,8 @@ def _merge_llm_result(parsed: ParsedRequest, llm_parsed: ParsedRequest, resolver
         resolution = resolver.resolve_company(term)
         if resolution.status == "resolved" and resolution.company_id:
             parsed.entities.append(resolution.company_id)
+
+
+def _normalize_focus_topics(values: list[str]) -> list[str]:
+    normalized = [FOCUS_TOPIC_ALIASES.get(value, value) for value in values]
+    return list(dict.fromkeys(value for value in normalized if value in VALID_FOCUS_TOPICS))

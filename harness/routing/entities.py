@@ -26,11 +26,9 @@ EVENT_TYPE_KEYWORDS = {
     "public_opinion": ("舆情", "新闻"),
 }
 FOCUS_TOPIC_KEYWORDS = {
-    "inventory": ("存货", "跌价准备", "库存"),
-    "cashflow": ("现金流", "经营现金流", "回款"),
-    "receivable": ("应收", "应收账款"),
-    "profit_quality": ("利润质量", "净利润", "非经常性损益"),
-    "gross_margin": ("毛利率", "毛利"),
+    "asset_quality": ("存货", "跌价准备", "库存", "应收", "应收账款"),
+    "earnings_quality": ("现金流", "经营现金流", "回款", "利润质量", "净利润", "非经常性损益"),
+    "profitability": ("毛利率", "毛利", "盈利能力"),
     "solvency": ("偿债", "负债", "债务"),
 }
 

@@ -29,6 +29,13 @@ def check_answerability(parsed: ParsedRequest) -> PreAnswerability:
             reason=UNSUPPORTED_FAMILIES.get(parsed.task_family, "请求超出系统能力边界。"),
         )
 
+    if parsed.task_family == "financial_investigation":
+        missing = []
+        if not parsed.entities:
+            missing.append("company_ids")
+        if missing:
+            return _clarify(parsed, missing)
+
     if parsed.requires_investigation or parsed.task_family in {
         "financial_investigation",
         "event_investigation",

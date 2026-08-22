@@ -18,6 +18,7 @@ from harness.routing.action_validator import repair_action, validate_action
 from harness.routing.answerability import check_answerability, is_investigation
 from harness.routing.capability_registry import candidate_capabilities, get_capability
 from harness.routing.direct_gate import build_direct_action
+from harness.routing.financial_period_resolver import resolve_financial_periods
 from harness.routing.planner import plan_next_action
 from harness.routing.request_parser import parse_request
 from harness.skills import run_skill
@@ -75,6 +76,7 @@ def resolve_request_node(state: AgentState) -> AgentState:
         knowledge_cutoff=state.knowledge_cutoff,
         llm_fallback=llm_fallback,
     )
+    parsed = resolve_financial_periods(parsed, state.knowledge_cutoff)
     state.parsed_request = parsed
     state.user_request.intent = parsed.task_family
 
@@ -346,6 +348,7 @@ def review_evidence_node(state: AgentState) -> AgentState:
         and latest_result.status.value != "success"
         and latest_result.error
         and not latest_result.error.retryable
+        and latest_result.error.error_type.value != "DATA_NOT_AVAILABLE"
     )
     document_searches = sum(
         1 for entry in state.tool_call_history if entry.tool_name == "document_search" and entry.operation == "search"

@@ -1,7 +1,10 @@
 """Agent workflow: Direct Fast Path + Evidence-driven Bounded Investigation (docs/13 §21)."""
 import os
+import sqlite3
 import sys
 import time
+from collections.abc import Callable
+from typing import Any
 from uuid import uuid4
 from pathlib import Path
 
@@ -33,8 +36,8 @@ from harness.graph.nodes import (
     validate_action_node,
     validate_tool_result_node,
 )
-from harness.tracing.jsonl import write_trace
-from harness.tracing.evaluation import write_evaluation_turn
+from harness.tracing.store import persist_run
+from harness.streaming import reset_emitter, set_emitter
 from schemas.agent_state import AgentState, Message, UserRequest
 
 
@@ -124,44 +127,86 @@ def run_agent(query: str, session_id: str = "SESSION-001") -> AgentState:
         knowledge_cutoff=knowledge_cutoff_from_env(),
     )
     state = AgentState.model_validate(COMPILED_GRAPH.invoke(state))
-    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    _persist_state(state, started=started)
+    return state
+
+
+def stream_agent(
+    query: str, session_id: str, emit: Callable[[str, dict[str, Any]], None],
+) -> AgentState:
+    """Execute the graph while emitting auditable node and answer-token events."""
+    started = time.perf_counter()
+    state = AgentState(
+        session_id=session_id,
+        messages=[Message(role="user", content=query)],
+        user_request=UserRequest(raw_query=query, normalized_query=query),
+        knowledge_cutoff=knowledge_cutoff_from_env(),
+    )
     run_id = f"RUN-{uuid4().hex.upper()}"
     trace_id = f"TRACE-{uuid4().hex.upper()}"
+    emit("turn.started", {"run_id": run_id, "trace_id": trace_id, "session_id": session_id})
+    token = set_emitter(emit)
+    evidence_seen: set[str] = set()
     try:
-        write_evaluation_turn(state, run_id=run_id, trace_id=trace_id, latency_ms=elapsed_ms)
-    except (OSError, ValueError) as exc:
-        state.warnings.append(f"Evaluation log write failed: {type(exc).__name__}: {exc}")
-    write_trace(
-        {
-            "run_id": run_id,
-            "trace_id": trace_id,
-            "turn_id": state.turn_id,
-            "session_id": session_id,
-            "user_query": query,
-            "parsed_request": state.parsed_request.model_dump() if state.parsed_request else None,
-            "pre_answerability": state.pre_answerability.model_dump() if state.pre_answerability else None,
-            "routing_mode": state.routing_mode,
-            "candidate_capabilities": state.candidate_capabilities,
-            "planner_actions": [entry.model_dump() for entry in state.tool_call_history],
-            "tool_results_summary": [result.model_dump() for result in state.tool_results],
-            "evidence_ids": [e.evidence_id for e in state.evidence_ledger],
-            "evidence_gaps": [gap.model_dump() for gap in state.evidence_gaps],
-            "repairs": [item for item in state.validation_results if item.get("stage") == "validate_action" and item.get("errors")],
-            "failed_actions": state.failed_actions,
-            "llm_calls": [record.model_dump() for record in state.llm_calls],
-            "validation": state.validation_results,
-            "final_answer": state.final_answer,
-            "answer_status": state.answer_status,
-            "termination_reason": state.termination_reason,
-            "workflow_status": state.workflow_status,
-            "llm_status": state.llm_status,
-            "errors": state.errors,
-            "warnings": state.warnings,
-            "executed_nodes": state.executed_nodes,
-            "latency_ms": elapsed_ms,
-        }
-    )
+        for update in COMPILED_GRAPH.stream(state, stream_mode="updates"):
+            for node_name, raw_update in update.items():
+                state = _merge_stream_update(state, raw_update)
+                _emit_node_event(emit, node_name, state, evidence_seen)
+    finally:
+        reset_emitter(token)
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    _persist_state(state, started=started, run_id=run_id, trace_id=trace_id, elapsed_ms=elapsed_ms)
+    emit("turn.completed", {
+        "run_id": run_id, "trace_id": trace_id, "latency_ms": elapsed_ms,
+        "state": state.model_dump(mode="json"),
+    })
     return state
+
+
+def _merge_stream_update(state: AgentState, update: Any) -> AgentState:
+    if isinstance(update, AgentState):
+        return update
+    if isinstance(update, dict):
+        return AgentState.model_validate({**state.model_dump(), **update})
+    return state
+
+
+def _emit_node_event(
+    emit: Callable[[str, dict[str, Any]], None], node: str, state: AgentState,
+    evidence_seen: set[str],
+) -> None:
+    if node == "resolve_request" and state.parsed_request:
+        emit("request.resolved", state.parsed_request.model_dump(mode="json"))
+    elif node == "route_mode":
+        emit("route.selected", {"mode": state.routing_mode, "capabilities": state.candidate_capabilities})
+    elif node == "validate_action" and state.current_action and state.current_action.action == "call_tool":
+        emit("tool.started", state.current_action.model_dump(mode="json"))
+    elif node == "execute_one_tool" and state.tool_results:
+        emit("tool.completed", {
+            "call": state.tool_call_history[-1].model_dump(mode="json") if state.tool_call_history else {},
+            "result": state.tool_results[-1].model_dump(mode="json"),
+        })
+    elif node == "merge_evidence":
+        added = [item for item in state.evidence_ledger if item.evidence_id not in evidence_seen]
+        evidence_seen.update(item.evidence_id for item in added)
+        if added:
+            emit("evidence.added", {"items": [item.model_dump(mode="json") for item in added]})
+    elif node == "generate_answer":
+        emit("answer.completed", {"status": state.answer_status})
+    emit("workflow.node", {"node": node, "status": "completed"})
+
+
+def _persist_state(
+    state: AgentState, *, started: float, run_id: str | None = None,
+    trace_id: str | None = None, elapsed_ms: int | None = None,
+) -> None:
+    elapsed_ms = elapsed_ms if elapsed_ms is not None else int((time.perf_counter() - started) * 1000)
+    run_id = run_id or f"RUN-{uuid4().hex.upper()}"
+    trace_id = trace_id or f"TRACE-{uuid4().hex.upper()}"
+    try:
+        persist_run(state, run_id=run_id, trace_id=trace_id, latency_ms=elapsed_ms)
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        state.warnings.append(f"Observability log write failed: {type(exc).__name__}: {exc}")
 
 
 if __name__ == "__main__":

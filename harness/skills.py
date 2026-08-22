@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from harness.llm import QwenClient
+from harness.streaming import JsonAnswerDeltaParser, emit, streaming_enabled
 from harness.prompts import SKILL_REGISTRY, PromptFileError, build_system_prompt, load_prompt, elapsed_ms
 from schemas.request import LlmCallRecord
 
@@ -76,8 +77,18 @@ def run_skill(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": payload if attempt == 0 else payload + _retry_hint(last_error)},
             ]
-            response = active_client.chat_json(messages, temperature=0.0)
-            content = response["choices"][0]["message"]["content"]
+            if skill == "final_answer" and attempt == 0 and streaming_enabled():
+                parser = JsonAnswerDeltaParser()
+                chunks = []
+                for chunk in active_client.chat_json_stream(messages, temperature=0.0):
+                    chunks.append(chunk)
+                    delta = parser.feed(chunk)
+                    if delta:
+                        emit("answer.delta", {"text": delta})
+                content = "".join(chunks)
+            else:
+                response = active_client.chat_json(messages, temperature=0.0)
+                content = response["choices"][0]["message"]["content"]
             model_output = model_class.model_validate(json.loads(content))
             if attempt > 0:
                 status = "recovered"

@@ -92,6 +92,8 @@ flowchart TD
 
 在线回答状态另行记录 `answered`、`partially_answered`、`clarification_required`、`unsupported`、`insufficient_evidence`、`failed`，不得与离线评测标签混用。
 
+`clarification_required` 只用于缺少的信息会导致主体、任务或比较维度无法唯一确定、因而不能可靠执行的情况。系统已经能够按确定性口径执行但覆盖不完整时，应执行并返回 `partially_answered`；工具运行后仍无核心证据时使用 `insufficient_evidence`，不能用澄清代替数据不足。
+
 ## 工具规划与校验
 
 简单、参数完整、操作唯一的事实请求走确定性 Direct Gate。其余请求进入有界调查循环：每轮只规划一个 `AgentAction`，包含工具、操作、参数、目的和预期证据。动作校验器负责能力状态、参数、实体、时间、截止日、重复调用、预算和操作组合；失败时仅允许一次最小修复或重新规划。
@@ -99,6 +101,10 @@ flowchart TD
 工具层处理数值计算、日期过滤、图路径、文本检索和事件排序。LLM 不得自行计算财务公式、编造引用、以语言推断控制链，或绕过数据截止日。
 
 综合财务风险调查先由 `financial_analysis.risk_scan` 返回v2逐期间观察值、状态、阈值和输入证据，再用 `event_timeline` 检查问询、处罚、更正和审计事件；只有用户需要原因、金额、解释或整改细节时，才将文档类型限定为 `announcement` 调用 `document_search`。`research_analysis` 仅在用户询问机构观点或 Reviewer 明确提出观点证据缺口时使用。`insufficient_data` 与 `not_applicable` 均不得表述为低风险；阈值未完成金标校准前不生成综合风险分。
+
+风险期间由确定性解析器在Gate B前完成。一个用户目标期间扩展为截至该目标的全部同口径历史；未指定期间时优先采用截止日前全部可用年度，没有年度数据时选择数据最多的一组同口径中报或季报；多个明确期间保持原样。不同累计口径不会混合比较。只有一个可用期间时仍执行点时规则，跨期规则和连续性规则返回 `insufficient_data`，最终回答按覆盖情况降级。Action Validator要求工具参数与解析结果逐项一致，阻止LLM Planner写入示例年份或猜测年份。
+
+补充核验工具返回 `DATA_NOT_AVAILABLE` 时表示当前数据源未命中，应记录为证据缺口并继续或降级回答；如果已有财务证据，不得因为事件或公告补充查询为空而抹掉整个风险分析结果。
 
 事件查询先由 `event_timeline` 返回结构化节点、阶段、日期精度和公告证据。`event_cluster` 仅在共享文号或标题主题相似度达到阈值时合并同类型节点，并返回 `match_reasons`；跨类型关系只允许基于共享文号生成。需要处罚金额、事件原因或正文细节时，Agent继续调用 `document_search`，不得将标题摘要扩写成正文事实。空结果诊断可用于调整类型或时间条件，但“索引未命中”不能改写成“现实中从未发生”。
 

@@ -44,7 +44,7 @@ app.cli.main()
                                └─ sufficient/partial/insufficient → generate_answer
    → generate_answer_node()  # 基于证据的回答（answer_status 分级）
    → persist_session → END
-→ harness.tracing.jsonl.write_trace()  # routing_mode/planner_actions/gaps/termination 全落盘
+→ harness.tracing.store.persist_run()  # 请求、工具、证据、节点和模型调用事务性落盘
 ```
 
 关键模块：
@@ -169,22 +169,50 @@ CLI 参数：
 
 ### 逐轮日志与后续评测
 
-日志写入位于 `run_agent()`，因此本地 CLI、FastAPI 和未来前端都会记录相同格式。每轮产生两类 JSONL：
+日志写入位于 `run_agent()`，因此本地 CLI、FastAPI 和前端都会记录相同格式。SQLite 是唯一运行日志事实源：
 
 ```text
-evaluation/reports/traces.jsonl     # 开发审计：节点、规划、工具、证据缺口和 LLM 调用
-evaluation/runs/agent_turns.jsonl    # 评测记录：一轮一行的稳定紧凑字段
+evaluation/runtime/fintrace_observability.sqlite3
 ```
 
-评测记录包含 `run_id`、`trace_id`、`session_id`、递增的 `turn_id`、问题、解析上下文、路由模式、工具调用摘要、证据 ID、回答、限制、错误、终止原因和耗时。它不保存 API Key、工具大对象或模型私有思维链；`run_id/trace_id` 可以把低分样本关联回完整 Trace。
+数据库分表保存运行主记录、工具执行、文件与非文件证据、工作流节点事件和 LLM 调用。记录包含 `run_id`、`trace_id`、`session_id`、递增的 `turn_id`、问题、解析上下文、路由模式、回答、限制、错误、终止原因和耗时，但不保存 API Key 或模型私有思维链。
 
 ```dotenv
-TRACE_PATH=./evaluation/reports/traces.jsonl
 FINTRACE_EVAL_LOG_ENABLED=true
-FINTRACE_EVAL_LOG_PATH=./evaluation/runs/agent_turns.jsonl
+FINTRACE_OBSERVABILITY_DB=./evaluation/runtime/fintrace_observability.sqlite3
 ```
 
-关闭评测日志时设置 `FINTRACE_EVAL_LOG_ENABLED=false`。JSONL 写入使用进程锁和文件锁，避免并发请求互相覆盖。
+关闭日志时设置 `FINTRACE_EVAL_LOG_ENABLED=false`。SQLite 使用 WAL、外键和事务保证并发写入一致性。需要评测交换文件时按需导出，不再持续维护两份 JSONL：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m harness.tracing.export_jsonl evaluation\exports\agent_runs.jsonl
+```
+
+前端或调试工具通过 `GET /runs` 分页查询运行列表，通过 `GET /runs/{run_id}` 获取工具、证据、节点和模型调用详情，不直接读取数据库文件。
+
+### Web 前端
+
+前端位于 `fintrace-frontend/`，浏览器请求先到 Next.js Route Handler，再由服务端转发至 FastAPI，因此无需配置浏览器 CORS：
+
+```text
+Browser → POST /api/fintrace/chat → FastAPI POST /chat → run_agent()
+```
+
+先在项目根目录启动后端：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m app.api.main
+```
+
+再打开另一个终端启动前端：
+
+```powershell
+cd fintrace-frontend
+npm install
+npm run dev
+```
+
+访问 `http://localhost:3000`。默认后端为 `http://127.0.0.1:8000`；需要修改时，在 `fintrace-frontend/.env.local` 设置 `FINTRACE_API_BASE_URL`。Web 对话使用 `POST /chat/stream`：LangGraph 节点、工具状态和证据通过 SSE 实时推送，Qwen 最终回答使用真实 token 流；`turn.completed` 返回权威最终状态并写入统一 SQLite。原 `POST /chat` 继续服务于 CLI、测试和非流式调用方。
 
 ## CLI 双模式
 
@@ -644,6 +672,8 @@ FINTRACE_FINANCIAL_INDEX_PATH=data/indexes/financial_analysis/financial_metrics.
 ```
 
 当前开放 `metric_query`、`metric_compare` 和 `risk_scan`。每条结果保留 normalized 来源、公告日期和映射版本；风险扫描额外返回规则版本、公式、阈值、计算输入、覆盖率及跳过原因。完整参数、指标目录和期间口径见 `tools/financial_analysis/README.md`。
+
+风险问题将“用户目标期间”和“实际计算期间”分开：指定一个年度时自动使用截至该年的全部可比年度；未指定时优先使用知识截止日前全部可用年度，没有年度数据则选取数据最多的同口径中报或季报。只有一个可用期间时仍执行点时规则，跨期和连续性规则明确返回数据不足。期间选择由SQLite和确定性解析器完成，Planner无权猜测年份。CLI Trace会同时显示两组期间及选择方式。
 
 ## 事件时间线数据
 

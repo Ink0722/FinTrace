@@ -8,8 +8,9 @@ import pytest
 def isolated_session_store(monkeypatch, tmp_path):
     """Every test gets its own session database; never touch data/sessions."""
     monkeypatch.setenv("FINTRACE_SESSIONS_PATH", str(tmp_path / f"sessions_{uuid4().hex}.sqlite"))
-    monkeypatch.setenv("TRACE_PATH", str(tmp_path / f"traces_{uuid4().hex}.jsonl"))
-    monkeypatch.setenv("FINTRACE_EVAL_LOG_PATH", str(tmp_path / f"turns_{uuid4().hex}.jsonl"))
+    monkeypatch.setenv(
+        "FINTRACE_OBSERVABILITY_DB", str(tmp_path / f"observability_{uuid4().hex}.sqlite3")
+    )
     yield
 
 

@@ -167,6 +167,15 @@ def _negative_cashflow(series, periods, thresholds):
     if negative_run:
         runs.append(negative_run)
     minimum = int(thresholds["consecutive_periods_min"])
+    if len(periods) < minimum:
+        for observation in observations:
+            if observation["status"] == "not_triggered":
+                observation["status"] = "insufficient_data"
+                observation["insufficient_reason"] = "minimum_periods_not_met"
+        return {
+            "longest_negative_run": max((len(run) for run in runs), default=0),
+            "minimum_periods_required": minimum,
+        }, observations
     for run in runs:
         if len(run) >= minimum:
             for index in run:
