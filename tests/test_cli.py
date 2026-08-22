@@ -158,7 +158,14 @@ def test_risk_scan_is_rendered_without_raw_json(capsys) -> None:
                 "operation": "risk_scan",
                 "coverage": {"evaluated_rule_count": 1, "requested_rule_count": 2},
                 "signals": [
-                    {"rule_id": "CASH_PROFIT_DIVERGENCE", "name": "利润与经营现金流背离", "status": "triggered", "severity": "medium"},
+                    {
+                        "rule_id": "CASH_PROFIT_DIVERGENCE", "name": "利润与经营现金流背离",
+                        "status": "triggered", "severity": "medium",
+                        "observations": [{
+                            "from": "2023-12-31", "to": "2024-12-31", "status": "triggered",
+                            "profit_growth": 0.2, "cashflow_growth": -0.3,
+                        }],
+                    },
                     {"rule_id": "LIQUIDITY_PRESSURE", "name": "短期偿债压力", "status": "insufficient_data", "severity": None},
                 ],
                 "rules_skipped": [{"rule_id": "LIQUIDITY_PRESSURE"}],
@@ -170,6 +177,8 @@ def test_risk_scan_is_rendered_without_raw_json(capsys) -> None:
     output = capsys.readouterr().out
     assert "规则覆盖" in output
     assert "triggered / medium" in output
+    assert "2023-12-31 -> 2024-12-31" in output
+    assert "利润增速=20.00%" in output
     assert "{'rule_id'" not in output
 
 
@@ -199,3 +208,55 @@ def test_penetration_path_is_rendered_hop_by_hop(capsys) -> None:
     assert "0.6500%" in output
     assert "主体甲 -> 中间公司" in output
     assert "中间公司 -> 目标公司" in output
+
+
+def test_event_details_are_rendered_without_raw_json(capsys) -> None:
+    render_tool_result(
+        "event_timeline",
+        {
+            "data": {
+                "summary": {"event_count": 1, "cluster_count": 1, "date_range": ["2024-01-01", "2024-01-01"]},
+                "events": [{
+                    "event_date": "2024-01-01", "title": "收到监管措施决定书",
+                    "event_stage": "initial", "date_precision": "announcement_only",
+                    "agencies": ["贵州证监局"],
+                }],
+                "clusters": [{"cluster_id": "CLUSTER-1", "events": [{}], "match_reasons": ["cluster_seed"]}],
+                "relations": [{
+                    "relation_type": "RESOLVES", "source_event_id": "EVT-B",
+                    "target_event_id": "EVT-A", "shared_reference_ids": ["〔2024〕12号"],
+                }],
+            },
+            "evidence": [],
+        },
+        indent=2,
+    )
+    output = capsys.readouterr().out
+    assert "initial / announcement_only" in output
+    assert "贵州证监局" in output
+    assert "EVT-B -> EVT-A" in output
+    assert "{'event_date'" not in output
+
+
+def test_research_views_are_rendered_with_attribution_and_chunk(capsys) -> None:
+    render_tool_result(
+        "research_analysis",
+        {
+            "data": {
+                "claim_count": 1,
+                "claim_type_counts": {"risk_opinion": 1},
+                "claims": [{
+                    "publish_date": "2024-04-01", "institution": "测试证券",
+                    "claim_type": "risk_opinion", "claim_text": "需求不及预期",
+                    "chunk_id": "RR-R-1-C0001",
+                }],
+            },
+            "evidence": [{}],
+        },
+        indent=2,
+    )
+    output = capsys.readouterr().out
+    assert "测试证券" in output
+    assert "需求不及预期" in output
+    assert "RR-R-1-C0001" in output
+    assert "{'claim_count'" not in output

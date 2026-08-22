@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.request_parser
-version: 1.2.0
+version: 1.3.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -51,6 +51,8 @@ output_schema: ParsedRequest
 - `document_retrieval`
 - `event_query`
 - `event_investigation`
+- `research_view_query`
+- `research_investigation`
 - `realtime_market_query`
 - `user_account_query`
 - `prediction_request`
@@ -61,6 +63,8 @@ output_schema: ParsedRequest
 - 用户只问财务指标值时选择 `financial_metric_query`；要求同口径数值比较时选择 `financial_metric_compare`；要求财务排雷、跨科目异常、风险扫描或综合研判时选择 `financial_investigation`。
 - 用户只问主要股东、持股比例或名单时选择 `ownership_snapshot`；要求两个时点的股东进入、退出、增减持时选择 `ownership_compare`；要求“穿透、间接持有、多层路径、通过谁持有”时选择 `ownership_penetration`。
 - 用户只要求筛选、列举或按时间整理事件时选择 `event_query`；要求结合公告解释事件经过、调查事件影响或综合多类证据时选择 `event_investigation`。是否需要聚类由 Planner 根据 Runtime Capability 决定，Parser 不选择 operation。
+- 用户查询机构观点、评级、盈利预测或研报风险提示时选择 `research_view_query`；要求解释观点理由、依据、详细上下文时选择 `research_investigation`；明确要求查找研报原文、指定语句或出处时选择 `document_retrieval`。
+- `event_types` 只能使用：`regulatory_inquiry`、`regulatory_penalty`、`audit_opinion`、`controller_change`、`share_pledge`、`financial_restated`、`major_litigation`、`risk_warning`。其中监管处罚、监管措施、警示函、立案和纪律处分使用 `regulatory_penalty`；风险警示和退市风险警示使用 `risk_warning`。
 
 槽位保留规则：
 - 财务风险调查必须保留所有明确报告期和 `focus_topics`；不得把多个期间压缩为一个范围字符串。
@@ -98,6 +102,8 @@ output_schema: ParsedRequest
   "focus_topics": ["string"],
   "document_types": ["string"],
   "event_types": ["string"],
+  "research_claim_types": ["cited_fact | analyst_judgment | earnings_forecast | investment_rating | risk_opinion"],
+  "institutions": ["string"],
   "comparison_type": "cross_period | cross_entity | none | ambiguous",
   "requires_explanation": true,
   "requires_investigation": true,

@@ -14,11 +14,16 @@ def run_risk_scan(*, company_id: str, periods: list[str], records: list[Financia
             "evidence_id": record.evidence_id,
         }
     signals = [evaluate_rule(rule, series, ordered_periods) for rule in rules]
-    evaluated = [item["rule_id"] for item in signals if item["status"] != "insufficient_data"]
+    evaluated = [item["rule_id"] for item in signals if item["status"] in {"triggered", "not_triggered"}]
     skipped = [
         {"rule_id": item["rule_id"], "reason": "missing_inputs", "missing_inputs": item["missing_inputs"]}
         for item in signals
         if item["status"] == "insufficient_data"
+    ]
+    not_applicable = [
+        {"rule_id": item["rule_id"], "reason": "rule_not_applicable", "observations": item["observations"]}
+        for item in signals
+        if item["status"] == "not_applicable"
     ]
     return {
         "operation": "risk_scan",
@@ -28,7 +33,20 @@ def run_risk_scan(*, company_id: str, periods: list[str], records: list[Financia
         "triggered_signals": [item for item in signals if item["status"] == "triggered"],
         "rules_evaluated": evaluated,
         "rules_skipped": skipped,
-        "coverage": {"requested_rule_count": len(rules), "evaluated_rule_count": len(evaluated), "coverage_rate": len(evaluated) / len(rules) if rules else 0.0},
+        "rules_not_applicable": not_applicable,
+        "coverage": {
+            "requested_rule_count": len(rules),
+            "evaluated_rule_count": len(evaluated),
+            "not_applicable_rule_count": len(not_applicable),
+            "insufficient_data_rule_count": len(skipped),
+            "coverage_rate": len(evaluated) / len(rules) if rules else 0.0,
+        },
         "rule_version": RISK_RULE_VERSION,
+        "threshold_calibration": {
+            "status": "uncalibrated",
+            "basis": "expert_initial",
+            "reason": "No frozen industry taxonomy or independent financial-risk gold set is currently available.",
+        },
+        "overall_score": None,
+        "scoring_status": "disabled_until_calibrated",
     }
-

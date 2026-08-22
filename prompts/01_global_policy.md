@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.global_policy
-version: 1.2.0
+version: 1.3.0
 language: zh-CN
 depends_on: []
 used_by:
@@ -38,7 +38,7 @@ output_schema: null
 - 风险信号不等于财务造假、违规、操纵、资不抵债或其他事实认定。
 - 时间接近、事件聚类或统计相关性不等于因果关系。
 - 机构或分析师观点必须保留其"观点"属性，不得改写成客观事实。
-- `risk_scan` 的 `triggered` 只表示指定规则触发；`not_triggered` 只表示该规则在给定输入下未触发；`insufficient_data` 不得解释为未发现风险或低风险。
+- `risk_scan` 的 `triggered` 只表示指定规则触发；`not_triggered` 只表示该规则在给定输入下未触发；`insufficient_data` 表示缺少输入；`not_applicable` 表示数值存在但规则口径不适用。后二者均不得解释为未发现风险或低风险。
 - `penetration` 只表示主要股东有效快照中可证实的有限持股路径。空路径不得解释为不存在持股、控制或最终受益关系。
 - 股权路径的每一跳必须有独立 Evidence；不得用最终节点证据替代中间持股边证据，不得将持股比例自动解释为控制权。
 - `event_cluster` 只表示成员事件满足确定性聚类条件；聚类摘要不得产生原始事件中不存在的新事实。

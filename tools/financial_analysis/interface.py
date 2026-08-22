@@ -309,6 +309,11 @@ def _execute_risk_scan(call: ToolCall, started: float) -> ToolResult:
         warnings.append("knowledge_cutoff was not provided; results use all disclosures available in the normalized snapshot.")
     if data["rules_skipped"]:
         warnings.append(f"{len(data['rules_skipped'])} risk rules were skipped because required inputs are missing.")
+    partially_observed = [item for item in data["signals"] if item["status"] in {"triggered", "not_triggered"} and item["missing_inputs"]]
+    if partially_observed:
+        warnings.append(f"{len(partially_observed)} evaluated risk rules have partial period coverage; inspect their observations.")
+    if data["rules_not_applicable"]:
+        warnings.append(f"{len(data['rules_not_applicable'])} risk rules were not applicable to the supplied values.")
     return ToolResult(tool_call_id=call.tool_call_id, tool_name=ToolName.FINANCIAL_ANALYSIS, status=ToolStatus.SUCCESS, data=data, evidence=build_financial_evidence(records, used_by=call.tool_call_id), warnings=warnings, metrics=ToolMetrics(execution_time_ms=_elapsed_ms(started)))
 
 

@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.next_action_planner
-version: 1.2.0
+version: 1.4.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -52,6 +52,7 @@ output_schema: AgentAction
 - 必须有且仅有一个目标公司，并至少有两个同类型、可比较的报告期。
 - `rule_ids` 或 `focus_topics` 只能来自 ParsedRequest 或当前 Evidence Gap；不得自行发明规则 ID。
 - 风险扫描已经执行后，只有报告期、规则范围或目标 Gap 实质变化时才允许再次调用。
+- 综合风险调查优先取得 `risk_scan` 的逐期间信号，再检查 `event_timeline` 中的问询、处罚、更正或审计事件；只有需要原因、金额、解释或整改细节时才检索 `announcement` 原文。研报观点只在用户询问机构看法或 Evidence Gap 明确需要外部观点时调用，不得机械补查。
 
 2. `ownership_analysis.penetration`
 - 必须同时具有起点主体、目标公司和 `as_of_date`。名称可以作为待工具唯一解析的起点，但不得由 Planner 猜测内部主体 ID。
@@ -62,11 +63,19 @@ output_schema: AgentAction
 3. `event_timeline.event_query` 与 `event_cluster`
 - 查找、过滤、排序原始事件时使用 `event_query`。
 - 只有用户要求归并同一事项的多个进展，或当前原始事件中确有需要聚合的相关节点时，才使用 `event_cluster`。
+- 监管事件的列举、类型和时间先使用 `event_timeline`；原因、金额、责任人、监管要求和整改细节只有在标题级事件不足时才定向调用 `document_search`。不得机械补查原文。
+
+4. `research_analysis.view_query` 与 `document_search.search`
+- 机构观点、评级、盈利预测和风险提示优先使用 `view_query`。
+- 用户要求观点理由、依据、详细上下文时，先用 `view_query` 定位观点，再用 `document_search` 检索 `research_report` 原文。
+- 用户只要求查找指定研报、原句或出处时直接使用 `document_search`。
+- 研报观点只证明机构曾作出该表述，不得替代财务、公告、股权等一手事实工具。
 - 通常先取得事件节点，再决定是否聚类；不得仅因事件日期接近就规划因果分析。
 
-4. 通用参数安全
+5. 通用参数安全
 - Planner 不得生成或修改 `knowledge_cutoff`，该参数由 Workflow 注入。
 - 不得把其他 operation 的专属参数混入当前调用，例如为 `event_query` 传入 `window_days`。
+- `event_types` 必须来自运行时能力声明；监管处罚、监管措施、警示函、立案和纪律处分使用 `regulatory_penalty`，风险警示和退市风险警示使用 `risk_warning`。
 
 【Action 类型】
 - `call_tool`：执行一个 Tool Operation；

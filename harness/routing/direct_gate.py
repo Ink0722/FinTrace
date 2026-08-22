@@ -105,6 +105,30 @@ def build_direct_action(parsed: ParsedRequest) -> AgentAction | None:
             reason="单一公司的事件查询，直接执行。",
             expected_evidence="按时间排序的事件节点及证据",
         )
+    if family == "research_view_query" and parsed.entities:
+        arguments: dict = {
+            "query": parsed.raw_query,
+            "operation": "view_query",
+            "company_ids": parsed.entities,
+            "limit": 20,
+        }
+        if parsed.start_date:
+            arguments["start_date"] = parsed.start_date
+        if parsed.end_date:
+            arguments["end_date"] = parsed.end_date
+        if parsed.research_claim_types:
+            arguments["claim_types"] = parsed.research_claim_types
+        if parsed.institutions:
+            arguments["institutions"] = parsed.institutions
+        if parsed.focus_topics:
+            arguments["topics"] = parsed.focus_topics
+        return AgentAction(
+            action="call_tool", capability="research_view_query",
+            tool_name="research_analysis", operation="view_query",
+            arguments=arguments,
+            reason="机构观点查询条件明确，直接读取结构化研报观点。",
+            expected_evidence="带机构、日期和原文Chunk定位的研报观点",
+        )
     return None
 
 

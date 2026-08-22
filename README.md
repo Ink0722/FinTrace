@@ -342,16 +342,17 @@ deployment/
 - 工具必须能脱离 Agent 独立测试；
 - MVP 优先稳定、可解释、可评测。
 
-Planner 采用“按需调用、综合分析主动检查”的策略：普通指标、公告或股东事实查询只调用必要工具。`financial_analysis` 已支持确定性风险规则扫描；`ownership_analysis` 已支持主要股东快照范围内的有限持股路径搜索；`event_timeline` 使用公告构建的冻结事件索引。风险信号不能直接认定造假，有限路径不能表述为完整控制关系。现有比赛文件不含历史或实时行情，相关问题返回数据不支持，不由 LLM 凭记忆补充。
+Planner 采用“按需调用、综合分析主动检查”的策略：普通指标、公告或股东事实查询只调用必要工具。`financial_analysis` 已支持确定性风险规则扫描；`ownership_analysis` 已支持主要股东快照范围内的有限持股路径搜索；`event_timeline` 使用公告构建的冻结事件索引；`research_analysis` 查询离线提炼且带归属的研报观点。风险信号不能直接认定造假，有限路径不能表述为完整控制关系，研报观点不能升级为公司客观事实。现有比赛文件不含历史或实时行情，相关问题返回数据不支持，不由 LLM 凭记忆补充。
 
 ## 当前工具进度
 
 | 工具 | 当前状态 | 数据来源 |
 |---|---|---|
-| `financial_analysis` | 已支持 `metric_query`、`metric_compare`、版本化 `risk_scan` 和行级证据 | `data/normalized/*.jsonl` / `data/indexes/financial_analysis/financial_metrics.sqlite` |
+| `financial_analysis` | 已支持 `metric_query`、`metric_compare`、逐期间 `financial-risk-rules-v2` 和行级证据；阈值尚未金标校准，不输出综合分 | `data/normalized/*.jsonl` / `data/indexes/financial_analysis/financial_metrics.sqlite` |
 | `ownership_analysis` | 已支持快照查询、比较、集中度及基于可桥接主体的有界 `penetration` | `data/normalized/shareholders.jsonl` / `data/indexes/ownership_analysis/ownership_holdings.sqlite` |
 | `document_search` | 已支持 FTS5 词法索引 + FAISS 向量的混合检索；词法索引缺失/失配时返回建库命令；demo 模式回退样例 | `data/indexes/document_search/fintrace_kb.sqlite` + `bm25_index.sqlite` / `vector.faiss` |
-| `event_timeline` | 已支持公告标题事件 SQLite、时间/类型/关键词过滤、事件聚类和证据绑定 | `data/normalized/announcements.jsonl` / `data/indexes/event_timeline/events.sqlite` |
+| `event_timeline` | 已支持公告标题事件 SQLite、阶段/文号/机构抽取、时间/类型/关键词过滤、证据约束聚类和空结果诊断 | `data/normalized/announcements.jsonl` / `data/indexes/event_timeline/events.sqlite` |
+| `research_analysis` | 已支持机构观点、评级、盈利预测、风险提示和研报引用事实的结构化查询及Chunk追溯 | `data/normalized/research_reports.jsonl` / `data/indexes/research_analysis/research_views.sqlite` |
 
 ## Operation 功能说明
 
@@ -362,14 +363,15 @@ Planner 通过 `operation` 指定工具本次需要完成的具体任务。每�
 | `document_search` | `search` | 在公告正文和研报摘要中执行关键词或语义检索，并按公司、文档类型和发布日期过滤结果；工作流注入 `knowledge_cutoff` 防止召回截止日之后披露的材料，返回可追溯的 Chunk 及其来源信息。 | “贵州茅台的研报如何评价其盈利能力？”“公告中如何描述本次违规事项？” |
 | `financial_analysis` | `metric_query` | 查询一个或多个公司在指定报告期的原始财务指标或确定性派生指标，保留数值、单位、报表口径和来源。 | “查询公司 2024 年营业收入和净利润。” |
 | `financial_analysis` | `metric_compare` | 对同口径指标进行确定性计算：单公司加多个期间时返回有序序列、相邻期间变化和首尾累计变化，多公司加单一期间时返回各公司数值及差异；工具不生成趋势性语言结论。 | “分析公司近五年的经营现金流趋势。”“比较甲公司和乙公司 2024 年的资产负债率。” |
-| `financial_analysis` | `risk_scan` | 对同口径期间执行版本化确定性规则，返回命中、未命中、输入不足、公式、阈值和证据；不输出黑箱评分，也不直接认定造假。 | “扫描公司近三年的财务异常风险。” |
+| `financial_analysis` | `risk_scan` | 对同口径期间执行v2确定性规则，逐期间返回触发、未触发、输入不足、不适用、公式、阈值和证据；不输出未经校准的综合评分，也不直接认定造假。 | “扫描公司近三年的财务异常风险。” |
 | `ownership_analysis` | `holding_query` | 查询主要股东快照：提供 `company_ids` 时从公司查股东并返回集中度，提供 `holder_ids` 时从股东反查公司，同时提供则做交叉过滤。 | “公司 2024 年末的前十大股东有哪些？”“某基金出现在哪些公司的主要股东名单中？” |
 | `ownership_analysis` | `holding_compare` | 比较同一公司两个快照日期的主要股东名单，确定性识别进入、退出、增持和减持及其变化幅度。 | “哪些主要股东在两个快照日期之间进行了减持？” |
 | `ownership_analysis` | `penetration` | 在快照能够证明的持股关系中搜索指定主体到目标公司的有限多层路径，返回每一跳持股比例、路径比例乘积和完整性警告。 | “主体 A 通过哪些层级间接持有公司 B？” |
 | `event_timeline` | `event_query` | 按主体、事件类型、关键词和日期范围筛选事件，完成去重和排序，并可包含财务或股东派生信号；返回可供 Agent 组织时间线的事件节点及证据。 | “查询公司 2022 年以来受到处罚的事件。”“整理公司近三年的违规和财务风险时间线。” |
-| `event_timeline` | `event_cluster` | 根据事件类型、时间接近程度和实体重合度聚合相关事件，输出事件簇及聚合依据；只表达相关性和时序，不自动认定因果关系。 | “把同一轮违规调查及后续处罚聚合为一个事件簇。” |
+| `event_timeline` | `event_cluster` | 根据事件类型、时间窗口、共享文号或标题主题相似度聚合相关事件并公开聚合依据；跨类型关系必须有共享文号，不自动认定因果关系。 | “把同一轮违规调查及后续处罚聚合为一个事件簇。” |
+| `research_analysis` | `view_query` | 按公司、日期、机构、观点类型和主题查询带归属的研报观点；正文栏目观点绑定Chunk，标题和元数据观点保留文档级来源。 | “近两年机构如何评价公司的盈利前景？”“研报提示了哪些风险？” |
 
-选择原则：查原文使用 `search`；只查询财务数值使用 `metric_query`；确定性比较使用 `metric_compare`；跨科目风险排查使用 `risk_scan`。`metric_compare` 不支持“多个公司与多个期间”同时比较。工具负责数值与规则计算，Agent LLM 负责解释，不得补充数值。持股事实和集中度使用 `holding_query`，股东变化使用 `holding_compare`，指定主体到目标公司的有限路径使用 `penetration`。事件筛选排序使用 `event_query`，相关节点归并使用 `event_cluster`；事件簇不表示因果。
+选择原则：查原文使用 `search`；只查询财务数值使用 `metric_query`；确定性比较使用 `metric_compare`；跨科目风险排查使用 `risk_scan`。`metric_compare` 不支持“多个公司与多个期间”同时比较。工具负责数值与规则计算，Agent LLM 负责解释，不得补充数值。持股事实和集中度使用 `holding_query`，股东变化使用 `holding_compare`，指定主体到目标公司的有限路径使用 `penetration`。事件筛选排序使用 `event_query`，相关节点归并使用 `event_cluster`；机构观点使用 `view_query`。事件或观点的原因、金额和原文上下文再由 `document_search` 补充，事件簇不表示因果，研报陈述不表示事实已独立核验。
 
 文档调查会继承请求解析阶段唯一确定的公司和文档类型过滤条件，避免 Planner 漏填参数后执行无关的全库检索。同一轮最多进行一次初始检索和一次 Query 改写；之后仍未覆盖的证据缺口进入 Limitations，不继续消耗调查预算。
 
@@ -670,7 +672,25 @@ major_litigation
 risk_warning
 ```
 
-每条首版事件标记 `extraction_method=announcement_title_rule`，只能证明某日披露了对应标题公告。`event_query` 负责筛选排序，`event_cluster` 负责可解释聚类；时间或主题相关不等于因果。索引缺失、过期或查询为空时显式返回结构化错误，不回退样例。
+每条标题事件标记 `extraction_method=announcement_title_rule_v3`；无法获得实际发生日时使用 `date_precision=announcement_only`。否定历史陈述不建为事件。`event_query` 负责筛选排序，`event_cluster` 负责有依据的聚类；时间或主题相关不等于因果。索引缺失、过期或查询为空时显式返回结构化错误及诊断，不回退样例。
+
+## 研报观点数据
+
+`research_analysis` 从研报元数据、标题和摘要固定栏目离线构建观点索引：
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.research_views.build_index
+```
+
+环境变量：
+
+```dotenv
+FINTRACE_RESEARCH_SOURCE_PATH=data/normalized/research_reports.jsonl
+FINTRACE_RESEARCH_CHUNKS_PATH=data/processed/documents/chunks_v2.jsonl
+FINTRACE_RESEARCH_INDEX_PATH=data/indexes/research_analysis/research_views.sqlite
+```
+
+简单观点问题直接调用 `research_analysis.view_query`；询问观点理由或原文依据时先查结构化观点，再限定研报类型调用 `document_search.search`。当前规则抽取不调用LLM，无法稳定结构化的复杂观点不会猜测补全。
 
 ## 混合式路由
 

@@ -262,7 +262,7 @@ def execute_one_tool_node(state: AgentState) -> AgentState:
     action = state.current_action
     arguments = dict(action.arguments or {})
     # Multi-operation tools receive the validated operation explicitly.
-    if action.tool_name in {"financial_analysis", "ownership_analysis", "event_timeline"} and action.operation:
+    if action.tool_name in {"financial_analysis", "ownership_analysis", "event_timeline", "research_analysis"} and action.operation:
         arguments.setdefault("operation", action.operation)
     capability = get_capability(action.capability or "")
     if state.knowledge_cutoff and capability and capability.supports_knowledge_cutoff:

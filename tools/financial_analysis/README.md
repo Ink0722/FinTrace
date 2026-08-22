@@ -1,6 +1,6 @@
 # financial_analysis
 
-`financial_analysis` 对比赛提供的资产负债表、利润表和现金流量表执行精确指标查询及确定性数值比较。当前版本只开放 `metric_query` 和 `metric_compare`，不执行财务风险扫描，也不输出风险评分。
+`financial_analysis` 对比赛提供的资产负债表、利润表和现金流量表执行精确指标查询、确定性数值比较和可解释的财务异常信号扫描。当前开放 `metric_query`、`metric_compare` 和 `risk_scan`。`risk_scan` 不输出未经校准的综合风险分数，也不能把规则触发升级为财务造假结论。
 
 ## 入口
 
@@ -199,7 +199,7 @@ announcement_date <= knowledge_cutoff
 
 ## `risk_scan`
 
-对单一公司至少两个同口径期间执行版本化确定性风险规则。示例：
+对单一公司至少两个同口径期间执行版本化确定性风险规则。v2按相邻期间或单个期间分别生成观察值，不再只比较首尾期间。示例：
 
 ```json
 {
@@ -211,7 +211,42 @@ announcement_date <= knowledge_cutoff
 }
 ```
 
-首版规则包括利润/经营现金流背离、应收/收入背离、存货/收入背离、短期偿债压力和利润率异常变化。输出逐条区分 `triggered`、`not_triggered`、`insufficient_data`，并给出公式、阈值、计算值、输入证据、规则版本和覆盖率。输入不足不会被解释为低风险；风险信号不能直接认定财务造假。
+`financial-risk-rules-v2` 包括：
+
+| 规则 | 作用 |
+| --- | --- |
+| `CASH_PROFIT_DIVERGENCE` | 逐相邻期间检查利润增长、经营现金流下降和现金流利润覆盖；利润非正时标记不适用。 |
+| `RECEIVABLE_REVENUE_DIVERGENCE` | 逐相邻期间检查应收增速是否显著超过收入增速。 |
+| `INVENTORY_REVENUE_DIVERGENCE` | 逐相邻期间检查存货增速是否显著超过收入增速。 |
+| `LIQUIDITY_PRESSURE` | 逐期间检查流动比率和货币资金对流动负债的覆盖。 |
+| `MARGIN_VOLATILITY` | 逐相邻期间检查毛利率和营业利润率异常变化。 |
+| `NEGATIVE_OPERATING_CASHFLOW_PERSISTENCE` | 检查经营现金流是否至少连续两个请求期间为负。 |
+| `SALES_CASH_REVENUE_DIVERGENCE` | 逐期间检查销售收现与收入的比例及其下降幅度。 |
+| `LEVERAGE_PRESSURE` | 逐期间检查资产负债率水平及相邻期间上升幅度。 |
+
+状态语义：
+
+- `triggered`：至少一个可评估观察值触发规则；
+- `not_triggered`：至少一个观察值可评估且没有观察值触发；
+- `insufficient_data`：所有观察值都因缺少必要指标而无法评估；
+- `not_applicable`：数据存在，但利润、收入或分母口径不适合应用规则。
+
+部分期间缺失不会抹掉其他可评估期间；输出保留每段 `observations`、缺失输入和实际使用的 Evidence。严重程度综合阈值超出幅度与连续触发次数，但不等于现实损失程度。
+
+当前阈值标记为 `expert_initial / uncalibrated`。数据没有冻结行业分类，且独立人工风险金标尚未完成，因此暂不构造行业阈值或综合评分；输出固定包含 `overall_score=null` 和 `scoring_status=disabled_until_calibrated`。
+
+### Agent调查顺序
+
+复杂财务风险问题采用：
+
+```text
+risk_scan逐期间信号
+-> event_timeline核查问询、处罚、更正和审计事件
+-> document_search按需读取announcement中的原因、金额和解释
+-> research_analysis仅在用户询问机构观点或证据缺口需要时补充
+```
+
+工具负责数据和规则计算，LLM只负责在证据边界内组织说明。
 
 ## 文件职责
 

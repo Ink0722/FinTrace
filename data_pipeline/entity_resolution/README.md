@@ -76,6 +76,33 @@ confirmed `SAME_LEGAL_ENTITY` links into the ownership runtime index.
 | `entity_links` | Auto-confirmed or human-confirmed same-entity decisions |
 | `match_candidates` | Uncertain mappings awaiting review; never used online |
 
+## Unlinked-holder audit
+
+Run the offline exploratory audit after rebuilding `entity_master.sqlite`:
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.entity_resolution.audit_unlinked
+```
+
+Outputs:
+
+```text
+data/processed/entity_resolution/unlinked_match_candidates.jsonl
+data/processed/entity_resolution/unlinked_holder_classification.jsonl
+data/processed/entity_resolution/unlinked_audit_report.json
+```
+
+The audit uses character-bigram recall followed by sequence and bigram
+similarity scoring. Each unlinked company holder retains at most three listed
+company candidates. Preliminary classes are `likely_same_entity`,
+`legal_core_collision`, `likely_related_entity`, `institution_or_vehicle`,
+`uncertain` and `insufficient_candidate`.
+
+Every row remains `review_status=pending`. In particular, equal legal cores
+with different legal forms are isolated because a group company and its listed
+subsidiary can share the same core name. Audit output never changes
+`entity_links` or the online ownership graph.
+
 ## Decision boundary
 
 - An unambiguous exact normalized name is auto-confirmed.

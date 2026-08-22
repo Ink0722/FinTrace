@@ -15,10 +15,12 @@ TASK_LABELS = {
     "financial_investigation": "财务调查", "ownership_snapshot": "主要股东快照查询",
     "ownership_compare": "股东变化比较", "document_retrieval": "文档检索",
     "event_query": "事件查询", "event_investigation": "事件调查", "unknown": "待识别任务",
+    "research_view_query": "研报观点查询", "research_investigation": "研报观点调查",
 }
 TOOL_LABELS = {
     "financial_analysis": "财务分析", "ownership_analysis": "股东分析",
     "document_search": "文档检索", "event_timeline": "事件时间线",
+    "research_analysis": "研报观点",
 }
 NODE_LABELS = {
     "load_session": "会话加载", "resolve_request": "请求解析",
@@ -139,6 +141,7 @@ def print_arguments(arguments: dict[str, Any], *, indent: int = 0) -> None:
         "metric_codes": "指标", "report_periods": "报告期", "as_of_date": "观察日期",
         "start_date": "开始日期", "end_date": "结束日期", "document_types": "文档类型",
         "event_types": "事件类型", "query": "问题/检索词", "mode": "检索模式", "top_k": "返回数量",
+        "claim_types": "观点类型", "institutions": "机构", "topics": "观点主题", "limit": "返回数量",
     }
     visible = [(labels.get(key, key), value) for key, value in arguments.items() if key not in {"operation", "knowledge_cutoff"}]
     if not visible:
@@ -157,6 +160,8 @@ def render_tool_result(tool_name: str, result: dict, *, indent: int) -> None:
         _render_ownership(data, indent)
     elif tool_name == "event_timeline":
         _render_events(data, indent)
+    elif tool_name == "research_analysis":
+        _render_research(data, indent)
     _field("新增证据", f"{len(result.get('evidence') or [])} 条", indent=indent)
 
 
@@ -169,8 +174,18 @@ def _render_financial(data: dict, indent: int) -> None:
             severity = signal.get("severity")
             suffix = f" / {severity}" if severity else ""
             _field(signal.get("name") or signal.get("rule_id"), f"{status}{suffix}", indent=indent)
+            for observation in (signal.get("observations") or [])[:4]:
+                period = (
+                    f"{observation.get('from')} -> {observation.get('to')}"
+                    if observation.get("from") and observation.get("to")
+                    else observation.get("report_period") or "期间未知"
+                )
+                detail = _risk_observation_detail(observation)
+                _field(period, f"{observation.get('status') or 'unknown'}{('；' + detail) if detail else ''}", indent=indent + 4)
         if data.get("rules_skipped"):
             _field("跳过规则", len(data["rules_skipped"]), indent=indent)
+        if data.get("rules_not_applicable"):
+            _field("不适用规则", len(data["rules_not_applicable"]), indent=indent)
         return
     _field("记录数量", data.get("record_count", 0), indent=indent)
     for item in (data.get("values") or [])[:8]:
@@ -225,12 +240,44 @@ def _render_ownership(data: dict, indent: int) -> None:
 
 def _render_events(data: dict, indent: int) -> None:
     summary = data.get("summary") or {}
-    _field("事件数量", summary.get("event_count", len(data.get("events") or [])), indent=indent)
-    _field("事件簇数量", summary.get("cluster_count", len(data.get("clusters") or [])), indent=indent)
+    events = data.get("events") or []
+    clusters = data.get("clusters") or []
+    relations = data.get("relations") or []
+    _field("事件数量", summary.get("event_count", len(events)), indent=indent)
+    _field("事件簇数量", summary.get("cluster_count", len(clusters)), indent=indent)
+    _field("明确关系", len(relations), indent=indent)
     if summary.get("date_range"):
         _field("日期范围", _join(summary["date_range"]), indent=indent)
-    for event in (data.get("events") or [])[:3]:
+    for event in events[:5]:
+        stage = event.get("event_stage") or "unknown"
+        precision = event.get("date_precision") or "unknown"
         print(" " * indent + f"  • {event.get('event_date')}｜{event.get('title') or event.get('event_type')}")
+        _field("阶段/日期精度", f"{stage} / {precision}", indent=indent + 4)
+        if event.get("agencies"):
+            _field("涉及机构", _join(event["agencies"]), indent=indent + 4)
+    for cluster in clusters[:3]:
+        _field(
+            cluster.get("cluster_id") or "事件簇",
+            f"{len(cluster.get('events') or [])} 个节点 / {_join(cluster.get('match_reasons') or [])}",
+            indent=indent,
+        )
+    for relation in relations[:5]:
+        _field(
+            relation.get("relation_type") or "事件关系",
+            f"{relation.get('source_event_id')} -> {relation.get('target_event_id')} / {_join(relation.get('shared_reference_ids') or [])}",
+            indent=indent,
+        )
+
+
+def _render_research(data: dict, indent: int) -> None:
+    claims = data.get("claims") or []
+    _field("观点数量", data.get("claim_count", len(claims)), indent=indent)
+    _field("观点类型", data.get("claim_type_counts") or {}, indent=indent)
+    for item in claims[:8]:
+        heading = f"{item.get('publish_date')} / {item.get('institution')} / {item.get('claim_type')}"
+        _field(heading, item.get("claim_text") or "无内容", indent=indent)
+        if item.get("chunk_id"):
+            _field("原文Chunk", item["chunk_id"], indent=indent + 4)
 
 
 def print_evidence(state: dict) -> None:
@@ -296,7 +343,7 @@ def evidence_fact_summary(fact: dict[str, Any]) -> str:
     if fact.get("metric_code"):
         metric = fact.get("metric_name") or METRIC_LABELS.get(fact.get("metric_code"), fact.get("metric_code"))
         return f"{fact.get('report_period') or ''} {metric} = {format_number(fact.get('value'), fact.get('currency'))}".strip()
-    text = fact.get("text") or fact.get("summary") or fact.get("title")
+    text = fact.get("text") or fact.get("summary") or fact.get("title") or fact.get("claim_text")
     if text:
         text = str(text).replace("\n", " ").strip()
         return text[:160] + ("…" if len(text) > 160 else "")
@@ -333,6 +380,28 @@ def tool_status_label(status: str) -> str:
 
 def _metric_names(values: Any) -> str:
     return _join([METRIC_LABELS.get(value, value) for value in (values or [])])
+
+
+def _risk_observation_detail(observation: dict) -> str:
+    labels = {
+        "profit_growth": "利润增速", "cashflow_growth": "经营现金流增速",
+        "cashflow_to_profit": "现金流/净利润", "growth_gap": "增速差",
+        "current_ratio": "流动比率", "cash_to_current_liabilities": "现金覆盖率",
+        "gross_margin_change": "毛利率变化", "operating_margin_change": "营业利润率变化",
+        "sales_cash_to_revenue": "销售收现/收入", "ratio_change": "比率变化",
+        "debt_to_assets": "资产负债率", "debt_ratio_change": "负债率变化",
+        "operating_cashflow": "经营现金流",
+    }
+    values = []
+    for key, label in labels.items():
+        value = observation.get(key)
+        if isinstance(value, (int, float)):
+            values.append(f"{label}={value:.2%}" if key != "operating_cashflow" else f"{label}={value:,.2f}")
+    if observation.get("not_applicable_reason"):
+        values.append(f"不适用原因={observation['not_applicable_reason']}")
+    if observation.get("missing_inputs"):
+        values.append(f"缺少{len(observation['missing_inputs'])}项输入")
+    return "，".join(values[:4])
 
 
 def _date_range(parsed: dict) -> str:

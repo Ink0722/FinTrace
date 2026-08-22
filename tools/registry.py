@@ -5,6 +5,7 @@ from tools.document_search.interface import document_search
 from tools.event_timeline.interface import event_timeline
 from tools.financial_analysis.interface import financial_analysis
 from tools.ownership_analysis.interface import ownership_analysis
+from tools.research_analysis.interface import research_analysis
 
 
 def execute_tool(call: ToolCall) -> ToolResult:
@@ -17,6 +18,8 @@ def execute_tool(call: ToolCall) -> ToolResult:
         return event_timeline(call)
     if call.tool_name == ToolName.FINANCIAL_ANALYSIS:
         return financial_analysis(call)
+    if call.tool_name == ToolName.RESEARCH_ANALYSIS:
+        return research_analysis(call)
 
     return ToolResult(
         tool_call_id=call.tool_call_id,

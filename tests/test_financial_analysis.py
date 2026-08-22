@@ -9,6 +9,8 @@ from data_pipeline.financial.build_index import build_financial_index
 from schemas.enums import ToolName
 from schemas.tool_calls import ToolCall
 from tools.financial_analysis.interface import financial_analysis
+from tools.financial_analysis.risk_catalog import RISK_RULES
+from tools.financial_analysis.risk_rules import evaluate_rule
 
 
 @pytest.fixture
@@ -177,9 +179,80 @@ def test_risk_scan_returns_triggered_not_triggered_and_skipped_rules(financial_i
     assert by_rule["INVENTORY_REVENUE_DIVERGENCE"]["status"] == "triggered"
     assert by_rule["RECEIVABLE_REVENUE_DIVERGENCE"]["status"] == "not_triggered"
     assert by_rule["LIQUIDITY_PRESSURE"]["status"] == "insufficient_data"
-    assert result.data["rule_version"] == "financial-risk-rules-v1"
-    assert result.data["coverage"]["evaluated_rule_count"] == 3
+    assert result.data["rule_version"] == "financial-risk-rules-v2"
+    assert result.data["coverage"]["evaluated_rule_count"] == 4
+    assert len(result.data["signals"]) == 8
+    assert result.data["threshold_calibration"]["status"] == "uncalibrated"
+    assert result.data["overall_score"] is None
+    assert result.data["scoring_status"] == "disabled_until_calibrated"
     assert result.evidence
+
+
+def test_risk_v2_evaluates_each_adjacent_period_pair() -> None:
+    series = {
+        "INVENTORY": _series({"2022-12-31": 100, "2023-12-31": 180, "2024-12-31": 190}),
+        "REVENUE": _series({"2022-12-31": 100, "2023-12-31": 110, "2024-12-31": 150}),
+    }
+    result = evaluate_rule(
+        RISK_RULES["INVENTORY_REVENUE_DIVERGENCE"],
+        series,
+        ["2022-12-31", "2023-12-31", "2024-12-31"],
+    )
+    assert [item["status"] for item in result["observations"]] == ["triggered", "not_triggered"]
+
+
+def test_risk_v2_marks_non_positive_profit_not_applicable() -> None:
+    series = {
+        "NET_PROFIT_PARENT": _series({"2023-12-31": -10, "2024-12-31": 5}),
+        "OPERATING_CASHFLOW": _series({"2023-12-31": 20, "2024-12-31": 1}),
+    }
+    result = evaluate_rule(
+        RISK_RULES["CASH_PROFIT_DIVERGENCE"], series, ["2023-12-31", "2024-12-31"]
+    )
+    assert result["status"] == "not_applicable"
+    assert result["observations"][0]["not_applicable_reason"] == "non_positive_profit"
+
+
+def test_risk_v2_keeps_usable_pairs_when_one_period_is_missing() -> None:
+    series = {
+        "ACCOUNTS_RECEIVABLE": _series({"2022-12-31": 100, "2023-12-31": 150}),
+        "REVENUE": _series({"2022-12-31": 100, "2023-12-31": 110, "2024-12-31": 120}),
+    }
+    result = evaluate_rule(
+        RISK_RULES["RECEIVABLE_REVENUE_DIVERGENCE"],
+        series,
+        ["2022-12-31", "2023-12-31", "2024-12-31"],
+    )
+    assert result["status"] == "triggered"
+    assert result["observations"][1]["status"] == "insufficient_data"
+    assert result["missing_inputs"]
+
+
+def test_risk_v2_detects_persistent_negative_cashflow() -> None:
+    series = {"OPERATING_CASHFLOW": _series({
+        "2022-12-31": 10, "2023-12-31": -2, "2024-12-31": -3,
+    })}
+    result = evaluate_rule(
+        RISK_RULES["NEGATIVE_OPERATING_CASHFLOW_PERSISTENCE"],
+        series,
+        ["2022-12-31", "2023-12-31", "2024-12-31"],
+    )
+    assert result["status"] == "triggered"
+    assert result["calculated_values"]["longest_negative_run"] == 2
+
+
+def test_risk_v2_sales_cash_and_leverage_rules() -> None:
+    periods = ["2023-12-31", "2024-12-31"]
+    sales = evaluate_rule(RISK_RULES["SALES_CASH_REVENUE_DIVERGENCE"], {
+        "CASH_RECEIVED_FROM_SALES": _series({periods[0]: 100, periods[1]: 60}),
+        "REVENUE": _series({periods[0]: 100, periods[1]: 100}),
+    }, periods)
+    leverage = evaluate_rule(RISK_RULES["LEVERAGE_PRESSURE"], {
+        "TOTAL_LIABILITIES": _series({periods[0]: 60, periods[1]: 80}),
+        "TOTAL_ASSETS": _series({periods[0]: 100, periods[1]: 100}),
+    }, periods)
+    assert sales["status"] == "triggered"
+    assert leverage["status"] == "triggered"
 
 
 def test_risk_scan_can_select_rules(financial_index) -> None:
@@ -256,6 +329,13 @@ def _call(arguments: dict) -> ToolCall:
         arguments=arguments,
         reason="test",
     )
+
+
+def _series(values: dict[str, float]) -> dict[str, dict]:
+    return {
+        period: {"value": value, "evidence_id": f"E-{period}"}
+        for period, value in values.items()
+    }
 
 
 def _row(object_id: str, company_id: str, report_period: str, **metrics) -> dict:

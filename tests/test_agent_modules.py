@@ -35,6 +35,27 @@ def test_rule_planner_emits_financial_risk_scan() -> None:
     assert action.arguments["report_periods"] == parsed.periods
 
 
+def test_financial_investigation_checks_events_before_announcement_text() -> None:
+    parsed = ParsedRequest(
+        raw_query="结合公告分析600519.SH近两年财务风险",
+        entities=["600519.SH"], periods=["2023-12-31", "2024-12-31"],
+        task_family="financial_investigation",
+    )
+    state = make_state(parsed)
+    risk = plan_next_action(state)
+    state.tool_call_history.append(ToolCallEntry(
+        tool_name=risk.tool_name, operation=risk.operation, arguments=risk.arguments, status="success",
+    ))
+    event = plan_next_action(state)
+    assert event.tool_name == "event_timeline"
+    state.tool_call_history.append(ToolCallEntry(
+        tool_name=event.tool_name, operation=event.operation, arguments=event.arguments, status="success",
+    ))
+    document = plan_next_action(state)
+    assert document.tool_name == "document_search"
+    assert document.arguments["document_types"] == ["announcement"]
+
+
 def test_rule_planner_emits_penetration_after_candidate_lookup() -> None:
     parsed = ParsedRequest(
         raw_query="张三在2025年2月1日如何穿透持有000001.SZ",
@@ -56,6 +77,46 @@ def test_rule_planner_emits_penetration_after_candidate_lookup() -> None:
     assert action.capability == "ownership_penetration"
     assert action.arguments["source_entity_id"] == "张三"
     assert action.arguments["target_entity_id"] == "000001.SZ"
+
+
+def test_research_investigation_queries_views_before_documents() -> None:
+    parsed = ParsedRequest(
+        raw_query="机构为什么看好601033.SH",
+        entities=["601033.SH"],
+        task_family="research_investigation",
+        research_claim_types=["analyst_judgment"],
+    )
+    state = make_state(parsed)
+    first = plan_next_action(state)
+    assert first.tool_name == "research_analysis"
+    assert first.operation == "view_query"
+    state.tool_call_history.append(ToolCallEntry(
+        tool_name="research_analysis", operation="view_query",
+        arguments=first.arguments, status="success",
+    ))
+    second = plan_next_action(state)
+    assert second.tool_name == "document_search"
+    assert second.arguments["document_types"] == ["research_report"]
+
+
+def test_event_investigation_queries_events_before_documents() -> None:
+    parsed = ParsedRequest(
+        raw_query="600519.SH为何收到监管处罚，具体金额是多少",
+        entities=["600519.SH"],
+        task_family="event_investigation",
+        event_types=["regulatory_penalty"],
+    )
+    state = make_state(parsed)
+    first = plan_next_action(state)
+    assert first.tool_name == "event_timeline"
+    assert first.operation == "event_query"
+    state.tool_call_history.append(ToolCallEntry(
+        tool_name="event_timeline", operation="event_query",
+        arguments=first.arguments, status="success",
+    ))
+    second = plan_next_action(state)
+    assert second.tool_name == "document_search"
+    assert second.arguments["document_types"] == ["announcement"]
 
 
 # --- time resolver ---

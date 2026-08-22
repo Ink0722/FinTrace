@@ -1,6 +1,6 @@
 # event_timeline
 
-事件时间线工具读取由比赛公告离线构建的冻结 SQLite 索引，提供事件筛选排序和可解释聚类。正式调用不读取 CSV，不回退 sample，也不临时让 LLM 从全库公告中编造事件。
+事件时间线工具读取由比赛公告离线构建的冻结 SQLite 索引，提供事件筛选排序、阶段识别和可解释聚类。正式调用不读取 CSV，不回退 sample，也不临时让 LLM 从全库公告中编造事件。
 
 ## 入口与 Operations
 
@@ -36,11 +36,16 @@ FINTRACE_EVENT_NORMALIZED_DIR=data/normalized
 FINTRACE_EVENT_INDEX_PATH=data/indexes/event_timeline/events.sqlite
 ```
 
-构建器按公告标题和类别执行确定性分类，无法分类的记录计入 manifest，不强行生成事件。首版事件的 `event_date` 等于公告日期，`announcement_date` 表示信息可见日期，`extraction_method=announcement_title_rule` 明确它只能支撑标题级事实。原文细节仍应调用 `document_search`。
+构建器按公告标题和类别执行确定性分类，无法分类的记录计入 manifest，不强行生成事件。“不存在被处罚”等否定历史陈述计入 `non_event_statements`，不生成已发生事件。首版事件的 `event_date` 等于公告日期，`announcement_date` 表示信息可见日期，`date_precision=announcement_only` 和 `extraction_method=announcement_title_rule_v3` 明确它只能支撑标题级事实。原文细节仍应调用 `document_search`。
 
-支持类型：`regulatory_inquiry`、`audit_opinion`、`controller_change`、`share_pledge`、`financial_restated`、`major_litigation`、`risk_warning`。
+支持类型：`regulatory_inquiry`、`regulatory_penalty`、`audit_opinion`、`controller_change`、`share_pledge`、`financial_restated`、`major_litigation`、`risk_warning`。
 
-当前真实索引包含 7,311 条标题事件。构建统计及源文件 SHA-256 以 `manifest.json` 为准。
+- `regulatory_penalty`：行政处罚、监管措施、警示函、立案、纪律处分和违规处理；
+- `risk_warning`：风险警示、其他风险警示和退市风险警示。两者不得混用。
+
+当前v3真实索引从7,311条候选公告中排除544条否定陈述，形成6,767条标题事件。构建统计及源文件SHA-256以 `manifest.json` 为准。
+
+当前v3.1真实冒烟中，`603377.SH`的36个事件在约26毫秒内生成22个事件簇，其中7个为多节点簇。该单次结果只证明流程可运行，正式性能结论按 `docs/08-统一评测清单与实施记录.md` 的矩阵重复测试并报告P50/P95。
 
 ## 在线工作流
 
@@ -59,7 +64,20 @@ event_timeline(call)
 
 ## 聚类规则
 
-首版使用确定性轻量聚类：同一公司、同一事件类型、相邻事件不超过 `window_days`，且实体 Jaccard 重合度不低于 0.3。默认窗口为 30 天，允许范围 1 至 365 天。每个簇保留所有原始事件和证据，不把相邻事件写成因果关系。
+v3使用确定性轻量聚类：同一公司、同一事件类型、相邻事件不超过 `window_days`，并且共享明确公告文号，或规范标题的字符二元组Jaccard相似度不低于0.45。默认窗口为30天，允许范围1至365天。每个簇通过 `match_reasons` 公开合并依据并保留全部原始证据。
+
+事件阶段包括 `initial`、`progress`、`response`、`remediation`、`resolution`、`correction` 和 `unknown`。跨类型 `relations` 只在两个事件共享明确文号时生成，可表示 `FOLLOWED_BY`、`RESPONDS_TO`、`REMEDIATES`、`RESOLVES` 或 `CORRECTS`；这些关系表示文号可验证的承接，不自动证明经济或法律因果关系。
+
+## 空结果诊断
+
+查询为空仍返回 `DATA_NOT_AVAILABLE`，其 `details.reason` 区分：
+
+- `company_not_present_in_event_index`：该主体在冻结事件索引中没有记录；
+- `event_type_not_available_for_company`：公司有事件，但指定类型不存在；
+- `all_matches_after_knowledge_cutoff`：存在匹配，但在问题截止日后才披露；
+- `date_or_keyword_filters_not_matched`：日期或关键词条件未命中。
+
+诊断只说明当前索引状态，不证明现实世界中没有发生事件。
 
 ## 错误策略
 

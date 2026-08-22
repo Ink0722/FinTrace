@@ -12,7 +12,7 @@ from schemas.tool_calls import ToolCall
 from schemas.tool_results import ToolError, ToolMetrics, ToolResult
 from tools.event_timeline.config import EventTimelineConfig
 from tools.event_timeline.repository import EventRepository, validate_event_index_snapshot
-from tools.event_timeline.timeline import cluster_events, evidence_from_clusters
+from tools.event_timeline.timeline import build_event_relations, cluster_events, evidence_from_clusters
 from tools.event_timeline.validation import SUPPORTED_EVENT_TYPES, validate_events
 
 
@@ -84,12 +84,18 @@ def event_timeline(call: ToolCall) -> ToolResult:
     except sqlite3.Error as exc:
         return _failed(call, started, ErrorType.TEMPORARY_DATABASE_ERROR, f"Event index query failed: {type(exc).__name__}: {exc}", retryable=isinstance(exc, sqlite3.OperationalError))
     if not events:
-        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "No event records matched the requested company, filters and cutoff.", details={"company_id": arguments.entity_ids[0]})
+        diagnostics = repository.diagnose_no_match(
+            company_id=arguments.entity_ids[0], event_types=arguments.event_types,
+            start_date=arguments.start_date, end_date=arguments.end_date,
+            keywords=arguments.keywords, knowledge_cutoff=arguments.knowledge_cutoff,
+        )
+        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "No event records matched the requested company, filters and cutoff.", details=diagnostics)
 
     validation = validate_events(events)
     if validation.errors:
         return _failed(call, started, ErrorType.VALIDATION_FAILED, "Event records validation failed.", details={"errors": validation.errors})
     clusters = cluster_events(events, window_days=arguments.window_days) if arguments.operation == "event_cluster" else []
+    relations = build_event_relations(events) if arguments.operation == "event_cluster" else []
     evidence = evidence_from_clusters(clusters or cluster_events(events, window_days=1), used_by=call.tool_call_id)
     data = {
         "operation": arguments.operation,
@@ -97,6 +103,7 @@ def event_timeline(call: ToolCall) -> ToolResult:
         "event_types": arguments.event_types,
         "events": [event.model_dump(mode="json") for event in events],
         "clusters": [cluster.model_dump(mode="json") for cluster in clusters],
+        "relations": [relation.model_dump(mode="json") for relation in relations],
         "summary": summarize_events(events, clusters),
         "knowledge_cutoff": arguments.knowledge_cutoff.isoformat() if arguments.knowledge_cutoff else None,
         "data_source": "sqlite_announcement_events",

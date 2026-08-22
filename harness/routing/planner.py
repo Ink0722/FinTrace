@@ -41,10 +41,14 @@ def _action_queue(parsed: ParsedRequest) -> list[AgentAction]:
         if entities and parsed.metrics and len(parsed.periods) >= 2 and len(entities) == 1:
             queue.append(_metric_compare_action(parsed))
         if entities:
-            queue.append(_document_action(parsed))
-            if parsed.document_types:
-                queue.append(_document_action(parsed, drop_type_filter=True))
-            queue.append(_event_action(parsed))
+            if family == "financial_investigation":
+                queue.append(_event_action(parsed))
+                queue.append(_document_action(parsed, force_announcement=True))
+            else:
+                queue.append(_document_action(parsed))
+                if parsed.document_types:
+                    queue.append(_document_action(parsed, drop_type_filter=True))
+                queue.append(_event_action(parsed))
         if not entities and parsed.people:
             queue.append(_holder_reverse_action(parsed))
         if not queue:
@@ -64,9 +68,16 @@ def _action_queue(parsed: ParsedRequest) -> list[AgentAction]:
     elif family == "event_investigation":
         if entities:
             queue.append(_event_action(parsed))
-        queue.append(_document_action(parsed))
+        queue.append(_document_action(parsed, force_announcement=True))
         if entities and parsed.metrics and parsed.periods:
             queue.append(_metric_query_action(parsed))
+    elif family == "research_investigation":
+        if entities:
+            queue.append(_research_action(parsed))
+        queue.append(_document_action(parsed, force_research=True))
+    elif family == "research_view_query":
+        if entities:
+            queue.append(_research_action(parsed))
     elif family in {"event_query", "document_retrieval", "general_financial_explanation"}:
         if entities and family == "event_query":
             queue.append(_event_action(parsed))
@@ -81,7 +92,7 @@ def _arguments_gain(action: AgentAction, state: AgentState) -> bool:
     """A repeated call is allowed only when its arguments differ from every executed call."""
     for entry in state.tool_call_history:
         if entry.tool_name == action.tool_name and entry.operation == action.operation:
-            if entry.arguments == _canonical_args(action.arguments):
+            if _canonical_args(entry.arguments) == _canonical_args(action.arguments):
                 return False
     return True
 
@@ -218,11 +229,21 @@ def _penetration_action(parsed: ParsedRequest, source: str, target: str, as_of: 
     )
 
 
-def _document_action(parsed: ParsedRequest, *, drop_type_filter: bool = False) -> AgentAction:
+def _document_action(
+    parsed: ParsedRequest,
+    *,
+    drop_type_filter: bool = False,
+    force_research: bool = False,
+    force_announcement: bool = False,
+) -> AgentAction:
     arguments: dict = {"query": parsed.raw_query, "top_k": DEFAULT_TOP_K}
     if parsed.entities:
         arguments["company_ids"] = parsed.entities
-    if parsed.document_types and not drop_type_filter:
+    if force_research:
+        arguments["document_types"] = ["research_report"]
+    elif force_announcement:
+        arguments["document_types"] = ["announcement"]
+    elif parsed.document_types and not drop_type_filter:
         arguments["document_types"] = parsed.document_types
     return AgentAction(
         action="call_tool",
@@ -251,4 +272,30 @@ def _event_action(parsed: ParsedRequest) -> AgentAction:
         arguments=arguments,
         reason="获取监管与风险事件时间线。",
         expected_evidence="事件节点、类型与日期",
+    )
+
+
+def _research_action(parsed: ParsedRequest) -> AgentAction:
+    arguments: dict = {
+        "query": parsed.raw_query,
+        "operation": "view_query",
+        "company_ids": parsed.entities,
+        "limit": 20,
+    }
+    if parsed.start_date:
+        arguments["start_date"] = parsed.start_date
+    if parsed.end_date:
+        arguments["end_date"] = parsed.end_date
+    if parsed.institutions:
+        arguments["institutions"] = parsed.institutions
+    if parsed.research_claim_types:
+        arguments["claim_types"] = parsed.research_claim_types
+    if parsed.focus_topics:
+        arguments["topics"] = parsed.focus_topics
+    return AgentAction(
+        action="call_tool", capability="research_view_query",
+        tool_name="research_analysis", operation="view_query",
+        arguments=arguments,
+        reason="先定位结构化机构观点，再按需检索对应研报原文。",
+        expected_evidence="带机构归因、发布日期和Chunk定位的观点证据",
     )

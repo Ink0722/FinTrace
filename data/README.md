@@ -17,6 +17,7 @@ data/
   indexes/
     document_search/      SQLite, embeddings and FAISS artifacts
     event_timeline/       Event query indexes
+    research_analysis/    Attributed research-view SQLite index
     entity_resolution/    Canonical entities, aliases and reviewed mappings
     ownership_analysis/  Shareholder holdings SQLite index
     financial_analysis/   Financial query indexes
@@ -26,3 +27,7 @@ data/
 The authoritative text Chunk corpus is
 `processed/documents/chunks_v2.jsonl`. Runtime indexes are derived artifacts and
 must be rebuildable from files under `normalized/` and `processed/`.
+
+`indexes/research_analysis/research_views.sqlite` is derived from normalized
+research reports and the frozen Chunk corpus. It stores attributed claims for
+fast online filtering; `document_search` remains the source-text retrieval layer.

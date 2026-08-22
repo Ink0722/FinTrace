@@ -1,6 +1,8 @@
 """Request Resolution (Gate A): query -> ParsedRequest. Rules first, LLM skill 02 as fallback."""
 from __future__ import annotations
 
+import re
+
 from schemas.agent_state import CurrentContext
 from schemas.request import EntityCandidate, ParsedRequest
 from tools.entity_resolver import EntityResolver
@@ -35,6 +37,9 @@ INVESTIGATION_MARKERS = ("分析", "调查", "排查", "诊断", "综合", "尽�
 COMPARE_MARKERS = ("变化", "比较", "对比", "同比增长", "同比下降", "趋势", "涨了", "跌了", "增长多少", "下降多少", "变动")
 REALTIME_MARKERS = ("股价", "市值", "行情", "涨跌幅", "K线", "盘口", "实时", "今日净值", "现价")
 PREDICTION_MARKERS = ("会涨", "会跌", "能涨", "目标价是多少", "值不值得买", "买入建议", "预测未来", "明年会")
+RESEARCH_MARKERS = ("机构", "券商", "分析师", "研报", "评级", "目标价", "盈利预测", "风险提示")
+RESEARCH_DETAIL_MARKERS = ("原文", "出处", "依据", "理由", "为什么", "详细", "具体怎么说")
+INSTITUTION_PATTERN = re.compile(r"([\u4e00-\u9fff]{2,12}(?:证券|研究所|基金))")
 
 
 def parse_request(
@@ -66,6 +71,8 @@ def parse_request(
         focus_topics=extract_focus_topics(query),
         document_types=extract_document_types(query),
         event_types=extract_event_types(query),
+        research_claim_types=_infer_research_claim_types(query),
+        institutions=list(dict.fromkeys(INSTITUTION_PATTERN.findall(query))),
         requires_explanation=any(marker in query for marker in EXPLANATION_MARKERS),
         requires_realtime=any(marker in query for marker in REALTIME_MARKERS),
         requires_prediction=any(marker in query for marker in PREDICTION_MARKERS),
@@ -98,6 +105,7 @@ def parse_request(
         "ownership_snapshot",
         "ownership_compare",
         "event_query",
+        "research_view_query",
     }:
         parsed.missing_slots.append("company_ids")
     parsed.missing_slots = list(dict.fromkeys(parsed.missing_slots))
@@ -107,6 +115,13 @@ def parse_request(
 def _infer_task_family(parsed: ParsedRequest, query: str) -> str:
     if parsed.requires_realtime:
         return "realtime_market_query"
+    has_research = any(marker in query for marker in RESEARCH_MARKERS)
+    if has_research and any(marker in query for marker in RESEARCH_DETAIL_MARKERS):
+        if any(marker in query for marker in ("找", "查找", "检索")) and "观点" not in query:
+            return "document_retrieval"
+        return "research_investigation"
+    if has_research:
+        return "research_view_query"
     if parsed.requires_prediction:
         return "prediction_request"
 
@@ -156,6 +171,20 @@ def _infer_metrics(query: str) -> list[str]:
     return selected or []
 
 
+def _infer_research_claim_types(query: str) -> list[str]:
+    values = []
+    mapping = (
+        ("investment_rating", ("评级", "买入", "增持", "减持", "目标价")),
+        ("earnings_forecast", ("盈利预测", "利润预测", "业绩预测", "预期")),
+        ("risk_opinion", ("风险提示", "担忧", "风险")),
+        ("analyst_judgment", ("怎么看", "观点", "认为", "评价", "如何看待")),
+    )
+    for claim_type, markers in mapping:
+        if any(marker in query for marker in markers):
+            values.append(claim_type)
+    return values
+
+
 def _merge_llm_result(parsed: ParsedRequest, llm_parsed: ParsedRequest, resolver: EntityResolver) -> None:
     """LLM output wins for semantics; deterministic entity resolution stays authoritative."""
     parsed.task_family = llm_parsed.task_family if llm_parsed.task_family != "unknown" else parsed.task_family
@@ -163,6 +192,8 @@ def _merge_llm_result(parsed: ParsedRequest, llm_parsed: ParsedRequest, resolver
     parsed.focus_topics = list(dict.fromkeys(parsed.focus_topics + llm_parsed.focus_topics))
     parsed.document_types = list(dict.fromkeys(parsed.document_types + llm_parsed.document_types))
     parsed.event_types = list(dict.fromkeys(parsed.event_types + llm_parsed.event_types))
+    parsed.research_claim_types = list(dict.fromkeys(parsed.research_claim_types + llm_parsed.research_claim_types))
+    parsed.institutions = list(dict.fromkeys(parsed.institutions + llm_parsed.institutions))
     parsed.requires_explanation = parsed.requires_explanation or llm_parsed.requires_explanation
     parsed.requires_investigation = parsed.requires_investigation or llm_parsed.requires_investigation
     parsed.requires_realtime = parsed.requires_realtime or llm_parsed.requires_realtime

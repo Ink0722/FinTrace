@@ -6,6 +6,7 @@ class ToolName(StrEnum):
     OWNERSHIP_ANALYSIS = "ownership_analysis"
     EVENT_TIMELINE = "event_timeline"
     FINANCIAL_ANALYSIS = "financial_analysis"
+    RESEARCH_ANALYSIS = "research_analysis"
 
 
 class ToolStatus(StrEnum):

@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-EVENT_MAPPING_VERSION = "announcement-events-v1"
+EVENT_MAPPING_VERSION = "announcement-events-v3.1"
 ANNOUNCEMENTS_FILENAME = "announcements.jsonl"
 
 
@@ -33,4 +33,3 @@ def _path(name: str, default: Path) -> Path:
         return default
     path = Path(raw).expanduser()
     return path if path.is_absolute() else PROJECT_ROOT / path
-

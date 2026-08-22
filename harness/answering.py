@@ -142,6 +142,9 @@ def _completed_tool_summary_lines(state: AgentState) -> list[str]:
         elif result.tool_name.value == "event_timeline":
             lines.append("")
             lines.append(f"event_timeline：cluster_count={len(data.get('clusters', []))}")
+        elif result.tool_name.value == "research_analysis":
+            lines.append("")
+            lines.append(f"research_analysis：claim_count={data.get('claim_count', 0)}")
 
     if state.evidence_ledger:
         lines.append("")

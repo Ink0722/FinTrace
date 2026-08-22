@@ -32,6 +32,7 @@ def check_answerability(parsed: ParsedRequest) -> PreAnswerability:
     if parsed.requires_investigation or parsed.task_family in {
         "financial_investigation",
         "event_investigation",
+        "research_investigation",
         "general_financial_explanation",
         "unknown",
     }:
@@ -84,6 +85,8 @@ def _missing_slots(parsed: ParsedRequest) -> list[str]:
         return [] if parsed.entities or "公告" in parsed.raw_query or "研报" in parsed.raw_query else ["company_ids"]
     if family == "event_query":
         return [] if parsed.entities else ["company_ids"]
+    if family == "research_view_query":
+        return [] if parsed.entities else ["company_ids"]
     return []
 
 
@@ -102,7 +105,7 @@ def is_investigation(parsed: ParsedRequest) -> bool:
     """Gate C: direct only for unambiguous, single-capability, complete-slot requests."""
     if parsed.requires_investigation or parsed.requires_explanation or parsed.requires_realtime:
         return True
-    if parsed.task_family in {"financial_investigation", "event_investigation", "general_financial_explanation", "unknown"}:
+    if parsed.task_family in {"financial_investigation", "event_investigation", "research_investigation", "general_financial_explanation", "unknown"}:
         return True
     if len(parsed.entities) > 1 and parsed.task_family in {"document_retrieval", "event_query", "ownership_snapshot"}:
         return True  # multi-entity composite -> let the planner decide

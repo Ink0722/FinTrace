@@ -12,7 +12,7 @@ from schemas.request import ParsedRequest
 def test_global_policy_has_valid_header() -> None:
     policy = load_prompt("01_global_policy.md")
     assert policy.prompt_id == "fintrace.global_policy"
-    assert policy.version == "1.2.0"
+    assert policy.version == "1.3.0"
     assert "Evidence 边界" in policy.body
 
 

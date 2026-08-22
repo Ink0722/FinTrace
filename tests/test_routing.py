@@ -49,6 +49,20 @@ def test_parse_realtime_and_prediction_families() -> None:
     assert parse_request("明年会涨吗", resolver=RESOLVER).requires_prediction
 
 
+def test_research_questions_route_by_structured_view_vs_source_text() -> None:
+    view = parse_request("机构如何看待601033.SH的盈利前景", resolver=RESOLVER)
+    assert view.task_family == "research_view_query"
+    assert view.research_claim_types == ["analyst_judgment"]
+    assert build_direct_action(view).tool_name == "research_analysis"
+
+    detail = parse_request("机构为什么看好601033.SH，具体依据是什么", resolver=RESOLVER)
+    assert detail.task_family == "research_investigation"
+    assert is_investigation(detail)
+
+    source = parse_request("查找601033.SH研报原文", resolver=RESOLVER)
+    assert source.task_family == "document_retrieval"
+
+
 def test_document_types_use_kb_vocabulary() -> None:
     assert extract_document_types("监管问询函有没有关注存货跌价准备") == ["announcement"]
     assert extract_document_types("研报怎么看盈利预测") == ["research_report"]
@@ -118,6 +132,7 @@ def test_capability_registry_reflects_real_implementation() -> None:
     assert ("financial_analysis", "metric_query") in implemented_operations()
     assert ("financial_analysis", "risk_scan") in implemented_operations()
     assert ("ownership_analysis", "penetration") in implemented_operations()
+    assert ("research_analysis", "view_query") in implemented_operations()
     assert CAPABILITIES["document_retrieval"].supports_knowledge_cutoff is True
     assert candidate_capabilities("financial_investigation") == [
         "financial_risk_scan",
@@ -125,4 +140,5 @@ def test_capability_registry_reflects_real_implementation() -> None:
         "financial_metric_compare",
         "document_retrieval",
         "event_query",
+        "research_view_query",
     ]

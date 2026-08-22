@@ -16,6 +16,8 @@ TaskFamily = Literal[
     "document_retrieval",
     "event_query",
     "event_investigation",
+    "research_view_query",
+    "research_investigation",
     "realtime_market_query",
     "user_account_query",
     "prediction_request",
@@ -48,6 +50,8 @@ class ParsedRequest(BaseModel):
     focus_topics: list[str] = Field(default_factory=list)
     document_types: list[str] = Field(default_factory=list)
     event_types: list[str] = Field(default_factory=list)
+    research_claim_types: list[str] = Field(default_factory=list)
+    institutions: list[str] = Field(default_factory=list)
     comparison_type: Literal["cross_period", "cross_entity", "none", "ambiguous"] = "none"
     requires_explanation: bool = False
     requires_investigation: bool = False

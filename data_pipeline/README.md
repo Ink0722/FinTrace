@@ -165,6 +165,7 @@ F:\conda_envs\FinTrace\python.exe -m data_pipeline.entity_resolution.fetch_compa
 F:\conda_envs\FinTrace\python.exe -m data_pipeline.entity_resolution.fetch_company_profiles --code 600030
 F:\conda_envs\FinTrace\python.exe -m data_pipeline.entity_resolution.fetch_company_profiles
 F:\conda_envs\FinTrace\python.exe -m data_pipeline.entity_resolution.build_index
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.entity_resolution.audit_unlinked
 F:\conda_envs\FinTrace\python.exe -m data_pipeline.ownership.build_index
 ```
 
@@ -189,6 +190,20 @@ The builder classifies normalized announcement titles with versioned determinist
 rules and writes `data/indexes/event_timeline/events.sqlite` plus `manifest.json`.
 Unclassified or invalid rows are counted instead of being force-labeled. Online
 event queries never fall back to CSV or sample records.
+
+## Research view index
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.research_views.build_index
+```
+
+The builder reads `data/normalized/research_reports.jsonl` and the frozen
+`data/processed/documents/chunks_v2.jsonl`. It writes attributed ratings,
+earnings forecasts, risk opinions, analyst judgments and report-cited facts to
+`data/indexes/research_analysis/research_views.sqlite`. Claims extracted from
+abstract sections must resolve to an existing research Chunk; title and metadata
+claims remain document-level sources. Online queries use this index first and
+call `document_search` only when the user needs the source wording or reasoning.
 
 ## Reproducibility
 

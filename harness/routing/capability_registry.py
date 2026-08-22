@@ -88,6 +88,15 @@ CAPABILITIES: dict[str, CapabilityDescriptor] = {
             description="相关事件聚合为事件簇。",
         ),
         CapabilityDescriptor(
+            name="research_view_query",
+            implemented=True,
+            tool="research_analysis",
+            operation="view_query",
+            required_slots=["company_ids"],
+            supports_knowledge_cutoff=True,
+            description="按公司、日期、机构、观点类型和主题查询可回溯研报观点。",
+        ),
+        CapabilityDescriptor(
             name="realtime_market_price",
             implemented=False,
             description="历史或实时行情，数据源不存在。",
@@ -124,6 +133,7 @@ def candidate_capabilities(task_family: str) -> list[str]:
             "financial_metric_compare",
             "document_retrieval",
             "event_query",
+            "research_view_query",
         ],
         "ownership_snapshot": ["ownership_snapshot"],
         "ownership_compare": ["ownership_compare", "ownership_snapshot"],
@@ -131,6 +141,8 @@ def candidate_capabilities(task_family: str) -> list[str]:
         "document_retrieval": ["document_retrieval"],
         "event_query": ["event_query", "event_cluster"],
         "event_investigation": ["event_query", "event_cluster", "document_retrieval"],
+        "research_view_query": ["research_view_query"],
+        "research_investigation": ["research_view_query", "document_retrieval"],
         "general_financial_explanation": ["document_retrieval"],
         "prediction_request": [],
         "realtime_market_query": [],
@@ -140,6 +152,7 @@ def candidate_capabilities(task_family: str) -> list[str]:
             "ownership_snapshot",
             "document_retrieval",
             "event_query",
+            "research_view_query",
         ],
     }
     candidates = [name for name in by_family.get(task_family, []) if CAPABILITIES[name].implemented]
