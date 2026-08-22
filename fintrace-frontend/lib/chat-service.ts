@@ -60,7 +60,11 @@ export const chatService = {
       response = await fetch("/api/fintrace/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: request.query, session_id: request.sessionId }),
+        body: JSON.stringify({
+          query: request.query,
+          session_id: request.sessionId,
+          user_id: request.userId,
+        }),
         signal: controller.signal,
       });
     } catch (error) {

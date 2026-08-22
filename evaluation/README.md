@@ -1,6 +1,7 @@
 # FinTrace Evaluation Runtime
 
-`evaluation/runtime/fintrace_observability.sqlite3` is the single source of truth for Agent run logs. It is generated locally and ignored by Git.
+`runtime/fintrace.sqlite3` is the single source of truth for Agent session memory,
+run logs and evaluation batches. It is generated locally and ignored by Git.
 
 The database stores one row per run plus related tool executions, file and non-file evidence, workflow node events, and LLM call metadata. It does not store API keys or private model reasoning.
 
@@ -8,7 +9,7 @@ The database stores one row per run plus related tool executions, file and non-f
 
 ```dotenv
 FINTRACE_EVAL_LOG_ENABLED=true
-FINTRACE_OBSERVABILITY_DB=./evaluation/runtime/fintrace_observability.sqlite3
+FINTRACE_RUNTIME_DB=./runtime/fintrace.sqlite3
 ```
 
 ## Read through FastAPI
@@ -39,3 +40,13 @@ F:\conda_envs\FinTrace\python.exe -m harness.tracing.migrate_jsonl `
 ```
 
 The original project logs have already been migrated and removed. The migration command remains for importing other legacy copies.
+
+The former session and observability databases are retained under
+`backups/runtime-premerge/` as migration backups.
+They are no longer written by CLI, API, frontend or evaluation execution.
+
+## Dataset execution
+
+The resumable multi-turn runner is documented in
+[`runner/README.md`](runner/README.md). Evaluation batches use dedicated local users,
+fixed knowledge cutoffs and `run_id` links into the same observability database.

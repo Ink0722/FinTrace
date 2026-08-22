@@ -19,7 +19,7 @@ def test_legacy_logs_are_merged_and_preserved(monkeypatch, tmp_path) -> None:
                   "turn_id": 1, "query": "q1", "answer": "answer", "latency_ms": 10}]
     traces.write_text("\n".join(json.dumps(item) for item in trace_rows) + "\n", encoding="utf-8")
     turns.write_text("\n".join(json.dumps(item) for item in turn_rows) + "\n", encoding="utf-8")
-    monkeypatch.setenv("FINTRACE_OBSERVABILITY_DB", str(database))
+    monkeypatch.setenv("FINTRACE_RUNTIME_DB", str(database))
 
     result = migrate(traces_path=traces, turns_path=turns, database_path=database)
 

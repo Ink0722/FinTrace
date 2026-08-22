@@ -172,17 +172,17 @@ CLI 参数：
 日志写入位于 `run_agent()`，因此本地 CLI、FastAPI 和前端都会记录相同格式。SQLite 是唯一运行日志事实源：
 
 ```text
-evaluation/runtime/fintrace_observability.sqlite3
+runtime/fintrace.sqlite3
 ```
 
 数据库分表保存运行主记录、工具执行、文件与非文件证据、工作流节点事件和 LLM 调用。记录包含 `run_id`、`trace_id`、`session_id`、递增的 `turn_id`、问题、解析上下文、路由模式、回答、限制、错误、终止原因和耗时，但不保存 API Key 或模型私有思维链。
 
 ```dotenv
 FINTRACE_EVAL_LOG_ENABLED=true
-FINTRACE_OBSERVABILITY_DB=./evaluation/runtime/fintrace_observability.sqlite3
+FINTRACE_RUNTIME_DB=./runtime/fintrace.sqlite3
 ```
 
-关闭日志时设置 `FINTRACE_EVAL_LOG_ENABLED=false`。SQLite 使用 WAL、外键和事务保证并发写入一致性。需要评测交换文件时按需导出，不再持续维护两份 JSONL：
+该数据库同时保存多轮会话记忆、用户与会话归属、运行日志和评测批次。关闭运行日志时设置 `FINTRACE_EVAL_LOG_ENABLED=false`，会话记忆仍会正常写入。SQLite 使用 WAL、外键和事务保证并发写入一致性。需要评测交换文件时按需导出，不再持续维护两份 JSONL：
 
 ```powershell
 F:\conda_envs\FinTrace\python.exe -m harness.tracing.export_jsonl evaluation\exports\agent_runs.jsonl
@@ -191,6 +191,13 @@ F:\conda_envs\FinTrace\python.exe -m harness.tracing.export_jsonl evaluation\exp
 前端或调试工具通过 `GET /runs` 分页查询运行列表，通过 `GET /runs/{run_id}` 获取工具、证据、节点和模型调用详情，不直接读取数据库文件。
 
 ### Web 前端
+
+左下角提供本地用户工作区切换、新建、重命名和删除。当前版本不要求登录，
+但聊天请求会携带 `user_id`，后端校验 `session_id` 归属；既有历史会话会自动
+归入默认的“本地用户”。浏览器仅保存当前选择和各用户的富界面缓存，用户及
+会话归属以 SQLite 为准。
+切换用户或刷新页面时会优先加载后端会话；`localStorage` 只补充尚未发送的新会话
+和工具展开状态等临时界面信息，不再阻止历史会话显示。
 
 前端位于 `fintrace-frontend/`，浏览器请求先到 Next.js Route Handler，再由服务端转发至 FastAPI，因此无需配置浏览器 CORS：
 

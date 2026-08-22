@@ -117,14 +117,16 @@ def knowledge_cutoff_from_env() -> str | None:
     return raw or None
 
 
-def run_agent(query: str, session_id: str = "SESSION-001") -> AgentState:
+def run_agent(
+    query: str, session_id: str = "SESSION-001", *, knowledge_cutoff: str | None = None,
+) -> AgentState:
     """Run one user query through the Direct/Investigation graph and persist a trace."""
     started = time.perf_counter()
     state = AgentState(
         session_id=session_id,
         messages=[Message(role="user", content=query)],
         user_request=UserRequest(raw_query=query, normalized_query=query),
-        knowledge_cutoff=knowledge_cutoff_from_env(),
+        knowledge_cutoff=knowledge_cutoff if knowledge_cutoff is not None else knowledge_cutoff_from_env(),
     )
     state = AgentState.model_validate(COMPILED_GRAPH.invoke(state))
     _persist_state(state, started=started)
@@ -133,6 +135,7 @@ def run_agent(query: str, session_id: str = "SESSION-001") -> AgentState:
 
 def stream_agent(
     query: str, session_id: str, emit: Callable[[str, dict[str, Any]], None],
+    *, knowledge_cutoff: str | None = None,
 ) -> AgentState:
     """Execute the graph while emitting auditable node and answer-token events."""
     started = time.perf_counter()
@@ -140,10 +143,12 @@ def stream_agent(
         session_id=session_id,
         messages=[Message(role="user", content=query)],
         user_request=UserRequest(raw_query=query, normalized_query=query),
-        knowledge_cutoff=knowledge_cutoff_from_env(),
+        knowledge_cutoff=knowledge_cutoff if knowledge_cutoff is not None else knowledge_cutoff_from_env(),
     )
     run_id = f"RUN-{uuid4().hex.upper()}"
     trace_id = f"TRACE-{uuid4().hex.upper()}"
+    state.run_id = run_id
+    state.trace_id = trace_id
     emit("turn.started", {"run_id": run_id, "trace_id": trace_id, "session_id": session_id})
     token = set_emitter(emit)
     evidence_seen: set[str] = set()
@@ -203,6 +208,8 @@ def _persist_state(
     elapsed_ms = elapsed_ms if elapsed_ms is not None else int((time.perf_counter() - started) * 1000)
     run_id = run_id or f"RUN-{uuid4().hex.upper()}"
     trace_id = trace_id or f"TRACE-{uuid4().hex.upper()}"
+    state.run_id = run_id
+    state.trace_id = trace_id
     try:
         persist_run(state, run_id=run_id, trace_id=trace_id, latency_ms=elapsed_ms)
     except (OSError, ValueError, sqlite3.Error) as exc:

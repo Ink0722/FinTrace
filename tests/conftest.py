@@ -6,11 +6,8 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def isolated_session_store(monkeypatch, tmp_path):
-    """Every test gets its own session database; never touch data/sessions."""
-    monkeypatch.setenv("FINTRACE_SESSIONS_PATH", str(tmp_path / f"sessions_{uuid4().hex}.sqlite"))
-    monkeypatch.setenv(
-        "FINTRACE_OBSERVABILITY_DB", str(tmp_path / f"observability_{uuid4().hex}.sqlite3")
-    )
+    """Every test gets one isolated runtime database."""
+    monkeypatch.setenv("FINTRACE_RUNTIME_DB", str(tmp_path / f"runtime_{uuid4().hex}.sqlite3"))
     yield
 
 

@@ -52,7 +52,16 @@ export type Conversation = {
   messages: Message[];
 };
 
+export type LocalUser = {
+  userId: string;
+  displayName: string;
+  avatarColor: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ChatRequest = {
   query: string;
   sessionId: string;
+  userId: string;
 };

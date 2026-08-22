@@ -2,15 +2,14 @@
 from __future__ import annotations
 
 import json
-import os
-import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
 from schemas.agent_state import CurrentContext, Message
 
+from harness.runtime_db import connect_runtime, runtime_path
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SESSIONS_PATH = PROJECT_ROOT / "data" / "sessions" / "sessions.sqlite"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -27,19 +26,17 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 class SessionStore:
     def __init__(self, path: Path | None = None):
-        raw = os.getenv("FINTRACE_SESSIONS_PATH")
-        configured = Path(raw).expanduser() if raw else (path or DEFAULT_SESSIONS_PATH)
+        configured = path or runtime_path()
         self.path = configured if configured.is_absolute() else PROJECT_ROOT / configured
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.path) as connection:
+        with connect_runtime(path=self.path) as connection:
             connection.executescript(SCHEMA_SQL)
             columns = {row[1] for row in connection.execute("PRAGMA table_info(sessions)")}
             if "turn_count" not in columns:
                 connection.execute("ALTER TABLE sessions ADD COLUMN turn_count INTEGER NOT NULL DEFAULT 0")
 
     def load(self, session_id: str) -> dict:
-        with sqlite3.connect(self.path) as connection:
-            connection.row_factory = sqlite3.Row
+        with connect_runtime(path=self.path) as connection:
             row = connection.execute(
                 "SELECT current_context, conversation_summary, verified_findings, recent_messages, turn_count "
                 "FROM sessions WHERE session_id = ?",
@@ -73,7 +70,7 @@ class SessionStore:
             turn_count,
             datetime.now(UTC).isoformat(),
         )
-        with sqlite3.connect(self.path) as connection:
+        with connect_runtime(path=self.path) as connection:
             connection.execute(
                 """
                 INSERT INTO sessions (session_id, current_context, conversation_summary, verified_findings, recent_messages, turn_count, updated_at)
@@ -89,3 +86,9 @@ class SessionStore:
                 [session_id, *payload],
             )
             connection.commit()
+
+    def delete(self, session_id: str) -> bool:
+        with connect_runtime(path=self.path) as connection:
+            cursor = connection.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            connection.commit()
+            return cursor.rowcount > 0

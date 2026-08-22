@@ -11,17 +11,17 @@ from typing import Any
 from dotenv import load_dotenv
 
 from schemas.agent_state import AgentState
+from harness.runtime_db import connect_runtime, runtime_path
 
 
 load_dotenv()
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "3"
+DEFAULT_USER_ID = "USER-DEFAULT"
 
 
 def observability_path() -> Path:
-    return Path(os.getenv(
-        "FINTRACE_OBSERVABILITY_DB",
-        "./evaluation/runtime/fintrace_observability.sqlite3",
-    ))
+    """Compatibility name for callers that need the unified runtime path."""
+    return runtime_path()
 
 
 def persist_run(
@@ -74,19 +74,23 @@ def build_run_payload(
 
 
 def list_runs(
-    *, session_id: str | None = None, answer_status: str | None = None,
+    *, session_id: str | None = None, user_id: str | None = None,
+    answer_status: str | None = None,
     limit: int = 50, offset: int = 0,
 ) -> list[dict[str, Any]]:
     clauses, parameters = [], []
     if session_id:
         clauses.append("session_id = ?")
         parameters.append(session_id)
+    if user_id:
+        clauses.append("user_id = ?")
+        parameters.append(user_id)
     if answer_status:
         clauses.append("answer_status = ?")
         parameters.append(answer_status)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     sql = f"""
-        SELECT run_id, trace_id, session_id, turn_id, created_at, query, answer,
+        SELECT run_id, trace_id, user_id, session_id, turn_id, created_at, query, answer,
                answer_status, routing_mode, termination_reason, workflow_status,
                llm_status, latency_ms
         FROM agent_runs {where}
@@ -115,16 +119,8 @@ def get_run(run_id: str) -> dict[str, Any] | None:
 
 
 def connect(*, readonly: bool = False, path: Path | None = None) -> sqlite3.Connection:
-    target = path or observability_path()
-    if readonly and not target.exists():
-        raise FileNotFoundError(f"Observability database not found: {target}")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(target, timeout=30)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 30000")
+    connection = connect_runtime(readonly=readonly, path=path)
     if not readonly:
-        connection.execute("PRAGMA journal_mode = WAL")
         _ensure_schema(connection)
     return connection
 
@@ -144,6 +140,15 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
     connection.executescript("""
         CREATE TABLE IF NOT EXISTS schema_info (
             key TEXT PRIMARY KEY, value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id TEXT PRIMARY KEY,
+            current_context TEXT NOT NULL DEFAULT '{}',
+            conversation_summary TEXT NOT NULL DEFAULT '',
+            verified_findings TEXT NOT NULL DEFAULT '[]',
+            recent_messages TEXT NOT NULL DEFAULT '[]',
+            turn_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS agent_runs (
             run_id TEXT PRIMARY KEY,
@@ -218,7 +223,41 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             payload_json TEXT NOT NULL DEFAULT '{}',
             PRIMARY KEY (run_id, sequence)
         );
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            avatar_color TEXT NOT NULL DEFAULT '#078b98',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            session_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            title TEXT NOT NULL DEFAULT '新会话',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_user_updated
+            ON user_sessions(user_id, updated_at DESC);
     """)
+    run_columns = {row[1] for row in connection.execute("PRAGMA table_info(agent_runs)")}
+    if "user_id" not in run_columns:
+        connection.execute(
+            "ALTER TABLE agent_runs ADD COLUMN user_id TEXT NOT NULL DEFAULT 'USER-DEFAULT'"
+        )
+    now = datetime.now(UTC).isoformat()
+    connection.execute(
+        "INSERT OR IGNORE INTO users(user_id, display_name, avatar_color, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (DEFAULT_USER_ID, "本地用户", "#078b98", now, now),
+    )
+    connection.execute("UPDATE agent_runs SET user_id = ? WHERE user_id IS NULL OR user_id = ''", (DEFAULT_USER_ID,))
+    connection.execute("""
+        INSERT OR IGNORE INTO user_sessions(session_id, user_id, title, created_at, updated_at)
+        SELECT session_id, ?, COALESCE(NULLIF(MIN(query), ''), '历史会话'),
+               MIN(created_at), MAX(created_at)
+        FROM agent_runs GROUP BY session_id
+    """, (DEFAULT_USER_ID,))
     connection.execute(
         "INSERT OR REPLACE INTO schema_info(key, value) VALUES ('schema_version', ?)",
         (SCHEMA_VERSION,),
@@ -227,16 +266,21 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
 
 def _upsert_payload(connection: sqlite3.Connection, payload: dict[str, Any]) -> None:
     run_id = str(payload["run_id"])
+    session_id = payload.get("session_id") or "UNKNOWN"
+    owner = connection.execute(
+        "SELECT user_id FROM user_sessions WHERE session_id = ?", (session_id,),
+    ).fetchone()
+    user_id = str(payload.get("user_id") or (owner["user_id"] if owner else DEFAULT_USER_ID))
     connection.execute("""
         INSERT OR REPLACE INTO agent_runs (
-            run_id, trace_id, session_id, turn_id, created_at, query, answer,
+            run_id, trace_id, user_id, session_id, turn_id, created_at, query, answer,
             final_answer_raw, answer_status, routing_mode, termination_reason,
             workflow_status, llm_status, latency_ms, knowledge_cutoff,
             parsed_request_json, current_context_json, warnings_json, errors_json,
             evidence_gaps_json, validation_json, failed_actions_json, legacy
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
-        run_id, payload.get("trace_id"), payload.get("session_id") or "UNKNOWN",
+        run_id, payload.get("trace_id"), user_id, session_id,
         payload.get("turn_id"), payload.get("created_at") or datetime.now(UTC).isoformat(),
         payload.get("query") or payload.get("user_query") or "", payload.get("answer") or "",
         payload.get("final_answer_raw") or payload.get("final_answer"), payload.get("answer_status"),
@@ -247,6 +291,12 @@ def _upsert_payload(connection: sqlite3.Connection, payload: dict[str, Any]) -> 
         _dumps(payload.get("evidence_gaps") or []), _dumps(payload.get("validation") or []),
         _dumps(payload.get("failed_actions") or []), int(bool(payload.get("legacy"))),
     ))
+    now = payload.get("created_at") or datetime.now(UTC).isoformat()
+    connection.execute(
+        "UPDATE user_sessions SET updated_at = ?, title = CASE WHEN title = '新会话' "
+        "THEN ? ELSE title END WHERE session_id = ?",
+        (now, (payload.get("query") or "新会话")[:80], session_id),
+    )
     for table in ("tool_executions", "evidence_records", "workflow_events", "llm_executions"):
         connection.execute(f"DELETE FROM {table} WHERE run_id = ?", (run_id,))
     _insert_tools(connection, run_id, payload)

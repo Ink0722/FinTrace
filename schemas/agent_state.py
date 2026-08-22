@@ -32,6 +32,8 @@ class UserRequest(BaseModel):
 
 class AgentState(BaseModel):
     session_id: str
+    run_id: str | None = None
+    trace_id: str | None = None
     turn_id: int = 1
     messages: list[Message] = Field(default_factory=list)
     current_context: CurrentContext = Field(default_factory=CurrentContext)

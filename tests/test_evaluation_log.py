@@ -5,7 +5,7 @@ from harness.tracing.store import get_run, list_runs
 
 def test_observability_store_records_complete_turns(monkeypatch, tmp_path) -> None:
     database_path = tmp_path / "observability.sqlite3"
-    monkeypatch.setenv("FINTRACE_OBSERVABILITY_DB", str(database_path))
+    monkeypatch.setenv("FINTRACE_RUNTIME_DB", str(database_path))
     monkeypatch.setenv("FINTRACE_EVAL_LOG_ENABLED", "true")
 
     first = run_agent("600519.SH 2024年营业收入是多少", session_id="TEST-EVAL-TURNS")
@@ -32,7 +32,13 @@ def test_observability_store_records_complete_turns(monkeypatch, tmp_path) -> No
 
 def test_observability_log_can_be_disabled(monkeypatch, tmp_path) -> None:
     database_path = tmp_path / "disabled.sqlite3"
-    monkeypatch.setenv("FINTRACE_OBSERVABILITY_DB", str(database_path))
+    monkeypatch.setenv("FINTRACE_RUNTIME_DB", str(database_path))
     monkeypatch.setenv("FINTRACE_EVAL_LOG_ENABLED", "false")
     run_agent("600519.SH 2024年营业收入是多少", session_id="TEST-EVAL-DISABLED")
-    assert not database_path.exists()
+    assert database_path.exists()  # Session memory still uses the unified runtime database.
+    import sqlite3
+    with sqlite3.connect(database_path) as connection:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agent_runs'"
+        ).fetchone()
+        assert table is None or connection.execute("SELECT COUNT(*) FROM agent_runs").fetchone()[0] == 0

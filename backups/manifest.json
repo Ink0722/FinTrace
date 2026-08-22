@@ -1,0 +1,54 @@
+{
+  "schema_version": "fintrace-local-backup-v1",
+  "created_at": "2026-08-23",
+  "items": [
+    {
+      "source": "data/sessions/sessions.sqlite",
+      "destination": "backups/runtime-premerge/sessions.sqlite",
+      "bytes": 20480,
+      "sha256": "E026882EF8DB5B8AFAA348DC52D93CFFFEE34A51C03A929BBA5CCC9E20E514D5"
+    },
+    {
+      "source": "evaluation/runtime/fintrace_observability.sqlite3",
+      "destination": "backups/runtime-premerge/fintrace_observability.sqlite3",
+      "bytes": 16351232,
+      "sha256": "5D9235797E4724918AED989C51AF95AB6B853129B484A6ECD3A43BEF1119F2FF"
+    },
+    {
+      "source": "fintrace-frontend/public/fintrace-logo-original.svg",
+      "destination": "backups/frontend-assets/fintrace-logo-original.svg",
+      "bytes": 56123,
+      "sha256": "0C1B1D7AF8A4E76E1B9D77D1BD6730088EBA355F460C00E80DF79FB25E0E8C41"
+    },
+    {
+      "source": "14-知识图谱与智能推荐赛道-东吴证券-基于 Agentic AI 的金融长上下文推理、图谱穿透与财报反欺诈智能问答算法探索.zip",
+      "destination": "backups/competition-source/competition-package.zip",
+      "bytes": 137722443,
+      "sha256": "5A88E66F332C8063EB9C303A9F746B1370252085ADDA9B340DFF8B7E482B73AC"
+    },
+    {
+      "source": "data/processed/documents/chunks.jsonl",
+      "destination": "backups/document-corpus-v1/chunks.jsonl",
+      "bytes": 215810017,
+      "sha256": "E5382D81D5D4B27942D000FF7EE76D59C90ED7A75B45F2B7D68DA43E714E7C7F"
+    },
+    {
+      "source": "data/processed/documents/chunk_manifest.json",
+      "destination": "backups/document-corpus-v1/chunk_manifest.json",
+      "bytes": 702,
+      "sha256": "696CAFC64B0D9677B877352E4ED8C77BBB1DA98B566AEAD6351675CC5E48FCF3"
+    },
+    {
+      "source": "data/processed/documents/chunk_quality.json",
+      "destination": "backups/document-corpus-v1/chunk_quality.json",
+      "bytes": 1507,
+      "sha256": "2B6F07C1C94126047C2425685CAA52B5D53EF4CA426B71999718CABC767D52B8"
+    },
+    {
+      "source": "data/indexes/document_search/.batch_build",
+      "destination": "backups/embedding-batches/document-search-batch-v1",
+      "checkpoint_sha256": "9A3F9CBB73E1CF0DCD9ADA4E0C437DFFC9ADF20D7378CF77AAB520BC2F09CD66",
+      "note": "Directory checksum anchor is the internal state.json checkpoint."
+    }
+  ]
+}

@@ -33,6 +33,11 @@ logs/
 tmp/
 temp/
 
+# Local backups of retired data and reproducibility artifacts
+backups/*
+!backups/README.md
+!backups/manifest.json
+
 # Local datasets, generated indexes, and bulky raw files
 data/*
 !data/README.md
@@ -57,6 +62,12 @@ evaluation/runtime/*.sqlite3
 evaluation/runtime/*.sqlite3-shm
 evaluation/runtime/*.sqlite3-wal
 evaluation/exports/*.jsonl
+
+# Unified mutable runtime database
+runtime/*.sqlite3
+runtime/*.sqlite3-shm
+runtime/*.sqlite3-wal
+!runtime/README.md
 
 # Office/editor temporary files
 ~$*

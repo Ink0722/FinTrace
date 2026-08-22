@@ -5,7 +5,8 @@ A standalone UI prototype for the FinTrace financial research agent.
 ## Included
 
 - Light-mode FinTrace visual system using the provided SVG logo
-- Multi-conversation sidebar with localStorage persistence
+- Multi-conversation sidebar with per-user localStorage persistence
+- Local user workspace switcher with create, rename and delete controls
 - Chat interface connected to the real FinTrace FastAPI Agent
 - Tool-call timeline with pending/running/completed states
 - Expandable tool arguments and result summaries
@@ -29,9 +30,15 @@ The existing FinTrace API accepts:
 ```json
 {
   "query": "...",
-  "session_id": "SESSION-001"
+  "session_id": "SESSION-001",
+  "user_id": "USER-DEFAULT"
 }
 ```
+
+Local users and session ownership are stored by FastAPI in the observability SQLite
+database. This workspace switcher does not implement passwords or authentication.
+The backend session list is authoritative. Browser storage only preserves unsent new
+conversations and richer temporary UI state, and is merged after the backend response.
 
 Set the server-side backend address in `.env.local`:
 
@@ -57,7 +64,7 @@ npm run dev
 
 Open `http://localhost:3000`. A browser conversation ID is passed as `session_id`, so follow-up questions in one conversation use the backend multi-turn memory.
 
-The backend persists every turn in `evaluation/runtime/fintrace_observability.sqlite3`. The browser must not open that file directly. Use the read-only observability endpoints instead:
+The backend persists sessions and turns in `runtime/fintrace.sqlite3`. The browser must not open that file directly. Use the read-only observability endpoints instead:
 
 ```text
 GET /runs?session_id=SESSION-001&limit=50&offset=0
@@ -83,3 +90,11 @@ The frontend currently consumes these SSE events:
 - `workflow.failed`
 
 The backend sends a heartbeat every 15 seconds. `answer.delta` contains only decoded user-facing answer text, never the surrounding structured JSON. `turn.completed` includes the authoritative final state so the UI can reconcile incremental events.
+
+## Session deletion
+
+Each conversation has rename and delete commands in its three-dot menu. Renamed titles
+are persisted in SQLite and remain unchanged after refresh. Persisted sessions are
+deleted transactionally with their memory, Agent runs, tool calls, evidence, workflow
+events, and LLM call records. Unsent blank conversations are removed only from browser
+state. Evaluation conversations follow the same deletion rules as ordinary conversations.
