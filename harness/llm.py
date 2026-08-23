@@ -42,10 +42,7 @@ class QwenClient:
 
     def chat_json(self, messages: list[dict[str, str]], temperature: float = 0.0) -> dict[str, Any]:
         if not self.enabled:
-            return {
-                "fallback": True,
-                "content": "Qwen API key is not configured. Deterministic fallback was used.",
-            }
+            raise RuntimeError("Qwen API key is not configured.")
 
         messages = self._ensure_json_keyword(messages)
         response = requests.post(
@@ -68,7 +65,7 @@ class QwenClient:
     def chat_json_stream(self, messages: list[dict[str, str]], temperature: float = 0.0) -> Iterator[str]:
         """Yield OpenAI-compatible content deltas while preserving JSON mode."""
         if not self.enabled:
-            return
+            raise RuntimeError("Qwen API key is not configured.")
         messages = self._ensure_json_keyword(messages)
         with requests.post(
             f"{self.base_url}/chat/completions",

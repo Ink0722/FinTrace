@@ -19,11 +19,18 @@ const DEFAULT_USER: LocalUser = {
 };
 
 function storageKey(userId: string) {
+  return `fintrace-local-conversations-v4:${userId}`;
+}
+
+function legacyStorageKey(userId: string) {
   return `fintrace-ui-conversations-v3:${userId}`;
 }
 
 function createConversation(): Conversation {
-  return { id: `SESSION-${Date.now()}`, title: "新会话", updatedAt: new Date().toISOString(), messages: [] };
+  return {
+    id: `SESSION-${Date.now()}`, title: "新会话", updatedAt: new Date().toISOString(),
+    messages: [], persisted: false, loaded: true,
+  };
 }
 
 export default function Home() {
@@ -31,6 +38,7 @@ export default function Home() {
   const [activeId, setActiveId] = useState(initialConversations[0].id);
   const [input, setInput] = useState("");
   const [running, setRunning] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [hydrated, setHydrated] = useState(false);
@@ -43,7 +51,10 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (hydrated) localStorage.setItem(storageKey(activeUserId), JSON.stringify(conversations));
+    if (hydrated) {
+      const localOnly = conversations.filter((item) => !item.persisted && item.messages.length === 0);
+      localStorage.setItem(storageKey(activeUserId), JSON.stringify(localOnly));
+    }
   }, [conversations, hydrated, activeUserId]);
 
   const initializeUsers = async () => {
@@ -63,6 +74,7 @@ export default function Home() {
   const loadUserWorkspace = async (userId: string, fetchBackend = true) => {
     setActiveUserId(userId);
     localStorage.setItem(ACTIVE_USER_KEY, userId);
+    localStorage.removeItem(legacyStorageKey(userId));
     const cached = localStorage.getItem(storageKey(userId));
     let cachedItems: Conversation[] = [];
     if (cached) {
@@ -77,6 +89,28 @@ export default function Home() {
     setConversations(items);
     setActiveId(items[0].id);
     setDrawerOpen(false);
+    if (items[0].persisted) await loadConversationDetail(userId, items[0].id);
+  };
+
+  const loadConversationDetail = async (userId: string, sessionId: string) => {
+    setHistoryLoading(true);
+    try {
+      const detail = await userService.sessionDetail(userId, sessionId);
+      setConversations((items) => items.map((item) => item.id === sessionId ? detail : item));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "加载历史会话失败");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const selectConversation = async (id: string) => {
+    setActiveId(id);
+    setDrawerOpen(false);
+    const selected = conversations.find((item) => item.id === id);
+    if (selected?.persisted && !selected.loaded) {
+      await loadConversationDetail(activeUserId, id);
+    }
   };
 
   const active = useMemo(() => conversations.find((c) => c.id === activeId) ?? conversations[0], [conversations, activeId]);
@@ -104,7 +138,7 @@ export default function Home() {
 
     try {
       // An unsent conversation exists only in browser state and has no backend row.
-      if (conversation.messages.length > 0) {
+      if (conversation.persisted) {
         await userService.removeSession(activeUserId, conversation.id);
       }
       const remaining = conversations.filter((item) => item.id !== conversation.id);
@@ -123,7 +157,7 @@ export default function Home() {
     const title = window.prompt("重命名会话", conversation.title)?.trim();
     if (!title || title === conversation.title) return;
     try {
-      if (conversation.messages.length > 0) {
+      if (conversation.persisted) {
         await userService.renameSession(activeUserId, conversation.id, title);
       }
       setConversations((items) => items.map((item) =>
@@ -172,7 +206,7 @@ export default function Home() {
 
   const send = async (preset?: string) => {
     const query = (preset ?? input).trim();
-    if (!query || running || !active) return;
+    if (!query || running || historyLoading || !active) return;
     setInput("");
     setRunning(true);
     const userMessage: Message = { id: `u-${Date.now()}`, role: "user", content: query, createdAt: new Date().toISOString() };
@@ -192,6 +226,9 @@ export default function Home() {
         onTrace: (traceSteps: TraceStep[]) => updateAssistant({ traceSteps }),
       });
       updateAssistant({ streaming: false });
+      setConversations((items) => items.map((item) =>
+        item.id === active.id ? { ...item, persisted: true, loaded: true } : item
+      ));
     } catch (error) {
       const message = error instanceof Error ? error.message : "发生未知错误。";
       updateAssistant({
@@ -212,14 +249,14 @@ export default function Home() {
 
   return (
     <main className="app-shell">
-      {sidebarOpen && <Sidebar conversations={conversations} activeId={activeId} onSelect={(id) => { setActiveId(id); setDrawerOpen(false); }} onNew={newChat} onRenameConversation={renameConversation} onDeleteConversation={deleteConversation} onCollapse={() => setSidebarOpen(false)} users={users} activeUser={activeUser} onSwitchUser={loadUserWorkspace} onCreateUser={createUser} onRenameUser={renameUser} onDeleteUser={deleteUser} />}
+      {sidebarOpen && <Sidebar conversations={conversations} activeId={activeId} onSelect={(id) => { void selectConversation(id); }} onNew={newChat} onRenameConversation={renameConversation} onDeleteConversation={deleteConversation} onCollapse={() => setSidebarOpen(false)} users={users} activeUser={activeUser} onSwitchUser={loadUserWorkspace} onCreateUser={createUser} onRenameUser={renameUser} onDeleteUser={deleteUser} />}
       <section className="workspace">
         <header className="topbar">
           <div className="topbar-left">
             {!sidebarOpen && <button className="icon-button" onClick={() => setSidebarOpen(true)}><Menu size={18} /></button>}
             <div className="mobile-brand"><Image src="/fintrace-logo.svg" alt="FinTrace" width={122} height={38} /></div>
             <button className="conversation-title">{active?.title ?? "FinTrace"}<ChevronDown size={14} /></button>
-            <span className="agent-state"><span className={`state-dot ${running ? "busy" : ""}`} />{running ? "Working" : "Ready"}</span>
+            <span className="agent-state"><span className={`state-dot ${running || historyLoading ? "busy" : ""}`} />{running ? "Working" : historyLoading ? "Loading" : "Ready"}</span>
           </div>
           <div className="topbar-actions">
             <span className="trace-status"><ShieldCheck size={14} /> Trace enabled</span>
@@ -262,22 +299,11 @@ function mergeWorkspaceConversations(
   backendItems: Conversation[],
   cachedItems: Conversation[],
 ): Conversation[] {
-  const cachedById = new Map(cachedItems.map((item) => [item.id, item]));
-  const merged = backendItems.map((backend) => {
-    const cached = cachedById.get(backend.id);
-    cachedById.delete(backend.id);
-    if (!cached) return backend;
-
-    // SQLite owns persisted turns. Keep the richer local rendering only when it
-    // represents at least the same number of messages as the backend record.
-    const messages = cached.messages.length >= backend.messages.length
-      ? cached.messages
-      : backend.messages;
-    return { ...backend, messages };
-  });
-
-  // Local-only records are unsent new chats and have not reached SQLite yet.
-  merged.push(...cachedById.values());
+  const persistedIds = new Set(backendItems.map((item) => item.id));
+  const localOnly = cachedItems
+    .filter((item) => !item.persisted && !persistedIds.has(item.id))
+    .map((item) => ({ ...item, persisted: false, loaded: true }));
+  const merged = [...backendItems, ...localOnly];
   return merged.sort((left, right) =>
     new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
   );

@@ -1,4 +1,5 @@
 import { Conversation, LocalUser } from "./types";
+import { BackendPersistedRun, mapPersistedRun } from "./chat-service";
 
 type BackendUser = {
   user_id: string;
@@ -12,7 +13,17 @@ type BackendSession = {
   session_id: string;
   title: string;
   updated_at: string;
-  messages: Conversation["messages"];
+  turn_count: number;
+  last_message: string;
+};
+
+type BackendSessionDetail = {
+  session_id: string;
+  title: string;
+  updated_at: string;
+  runs: BackendPersistedRun[];
+  has_more: boolean;
+  oldest_turn?: number;
 };
 
 export const userService = {
@@ -47,8 +58,22 @@ export const userService = {
     const response = await fetch(`/api/fintrace/users/${userId}/sessions`, { cache: "no-store" });
     const payload = await readResponse<{ items: BackendSession[] }>(response);
     return payload.items.map((item) => ({
-      id: item.session_id, title: item.title, updatedAt: item.updated_at, messages: item.messages,
+      id: item.session_id, title: item.title, updatedAt: item.updated_at, messages: [],
+      turnCount: item.turn_count, persisted: true, loaded: false,
     }));
+  },
+
+  async sessionDetail(userId: string, sessionId: string): Promise<Conversation> {
+    const response = await fetch(
+      `/api/fintrace/users/${encodeURIComponent(userId)}/sessions/${encodeURIComponent(sessionId)}?limit=200`,
+      { cache: "no-store" },
+    );
+    const item = await readResponse<BackendSessionDetail>(response);
+    return {
+      id: item.session_id, title: item.title, updatedAt: item.updated_at,
+      messages: item.runs.flatMap(mapPersistedRun), persisted: true, loaded: true,
+      turnCount: item.runs.length, hasMore: item.has_more, oldestTurn: item.oldest_turn,
+    };
   },
 
   async removeSession(userId: string, sessionId: string): Promise<void> {

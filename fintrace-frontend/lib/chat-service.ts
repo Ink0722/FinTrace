@@ -1,4 +1,4 @@
-import { ChatRequest, Evidence, ToolCall, TraceStep } from "./types";
+import { ChatRequest, Evidence, Message, ToolCall, TraceStep } from "./types";
 
 export type ChatHooks = {
   onToolUpdate: (tools: ToolCall[]) => void;
@@ -41,6 +41,31 @@ type BackendState = {
   tool_results?: BackendToolResult[];
   evidence_ledger?: BackendEvidence[];
   errors?: Array<{ stage?: string; error_type?: string; message?: string }>;
+};
+
+export type BackendPersistedRun = {
+  run_id: string;
+  turn_id: number;
+  created_at: string;
+  query: string;
+  answer: string;
+  tool_calls?: Array<{
+    tool_call_id?: string;
+    tool_name?: string;
+    operation?: string;
+    status?: string;
+    reason?: string;
+    duration_ms?: number;
+    arguments?: Record<string, unknown>;
+    result?: BackendToolResult;
+  }>;
+  evidence?: BackendEvidence[];
+  workflow_events?: Array<{
+    sequence?: number;
+    node_name?: string;
+    event_type?: string;
+    status?: string;
+  }>;
 };
 
 const TOOL_LABELS: Record<string, string> = {
@@ -144,6 +169,48 @@ export const chatService = {
     return { content, tools, evidence, state: finalState };
   },
 };
+
+export function mapPersistedRun(run: BackendPersistedRun): Message[] {
+  const state: BackendState = {
+    tool_call_history: (run.tool_calls ?? []).map((item) => ({
+      tool_name: item.tool_name,
+      operation: item.operation,
+      arguments: item.arguments ?? {},
+      status: item.status,
+      action_reason: item.reason,
+    })),
+    tool_results: (run.tool_calls ?? []).map((item) => ({
+      ...(item.result ?? {}),
+      tool_call_id: item.result?.tool_call_id ?? item.tool_call_id,
+      tool_name: item.result?.tool_name ?? item.tool_name,
+      status: item.result?.status ?? item.status,
+      metrics: {
+        ...(item.result?.metrics ?? {}),
+        execution_time_ms: item.result?.metrics?.execution_time_ms ?? item.duration_ms ?? 0,
+      },
+    })),
+  };
+  const traceSteps: TraceStep[] = (run.workflow_events ?? []).map((item, index) => {
+    const node = item.node_name ?? item.event_type ?? `step-${index + 1}`;
+    return {
+      id: `history-${run.run_id}-${item.sequence ?? index + 1}`,
+      label: nodeLabel(node),
+      detail: node,
+      status: item.status === "failed" ? "failed" : "completed",
+    };
+  });
+  return [
+    {
+      id: `u-${run.run_id}`, role: "user", content: run.query,
+      createdAt: run.created_at,
+    },
+    {
+      id: `a-${run.run_id}`, role: "assistant", content: run.answer ?? "",
+      createdAt: run.created_at, toolCalls: mapTools(state),
+      evidence: mapEvidence(run.evidence ?? []), traceSteps,
+    },
+  ];
+}
 
 async function consumeSse(
   body: ReadableStream<Uint8Array>,

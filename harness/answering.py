@@ -1,74 +1,4 @@
-import json
-from pathlib import Path
-from typing import Any
-
-import requests
-
-from harness.llm import QwenClient
 from schemas.agent_state import AgentState
-
-
-DEFAULT_SYSTEM_PROMPT = "只能基于工具结果回答；证据不足必须说明；不得编造事实。"
-SYSTEM_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "system.md"
-
-
-def load_system_prompt() -> str:
-    try:
-        prompt = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
-    except OSError:
-        return DEFAULT_SYSTEM_PROMPT
-    return prompt or DEFAULT_SYSTEM_PROMPT
-
-
-def generate_answer_with_status(state: AgentState) -> tuple[str, str, dict[str, Any] | None]:
-    payload = {
-        "user_query": state.user_request.raw_query,
-        "parsed_request": state.parsed_request.model_dump() if state.parsed_request else None,
-        "answer_status": state.answer_status,
-        "routing_mode": state.routing_mode,
-        "tool_calls": [entry.model_dump() for entry in state.tool_call_history],
-        "tool_results": [result.model_dump() for result in state.tool_results],
-        "evidence_ids": [evidence.evidence_id for evidence in state.evidence_ledger],
-        "evidence_gaps": [gap.model_dump() for gap in state.evidence_gaps],
-        "warnings": state.warnings,
-    }
-    client = QwenClient()
-    if not client.enabled:
-        error = {
-            "stage": "generate_answer",
-            "error_type": "LLM_NOT_CONFIGURED",
-            "message": "未检测到 QWEN_API_KEY 或 DASHSCOPE_API_KEY。",
-            "retryable": False,
-        }
-        return _structured_llm_error_text(state, error), "failed", error
-
-    try:
-        response = client.chat_json(
-            [
-                {"role": "system", "content": load_system_prompt()},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)},
-            ],
-            temperature=0.0,
-        )
-    except requests.RequestException as exc:
-        error = {
-            "stage": "generate_answer",
-            "error_type": type(exc).__name__,
-            "message": str(exc),
-            "retryable": True,
-        }
-        return _structured_llm_error_text(state, error), "failed", error
-
-    try:
-        return response["choices"][0]["message"]["content"], "success", None
-    except (KeyError, IndexError, TypeError):
-        error = {
-            "stage": "generate_answer",
-            "error_type": "LLM_BAD_RESPONSE",
-            "message": "Qwen returned an unexpected response shape.",
-            "retryable": False,
-        }
-        return _structured_llm_error_text(state, error), "failed", error
 
 
 def build_structured_error_answer(state: AgentState) -> str:
@@ -95,18 +25,6 @@ def build_structured_error_answer(state: AgentState) -> str:
         for warning in state.warnings:
             lines.append(f"- {warning}")
 
-    lines.extend(_completed_tool_summary_lines(state))
-    return "\n".join(lines)
-
-
-def _structured_llm_error_text(state: AgentState, error: dict[str, Any]) -> str:
-    lines = [
-        "⚠️ LLM 生成失败，未生成自然语言研判。",
-        f"错误类型：{error.get('error_type')}",
-        f"错误信息：{error.get('message')}",
-        "",
-        "为避免误导，下面只展示已完成的结构化工具结果摘要，不补充模型推断。",
-    ]
     lines.extend(_completed_tool_summary_lines(state))
     return "\n".join(lines)
 

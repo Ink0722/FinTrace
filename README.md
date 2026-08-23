@@ -199,6 +199,11 @@ F:\conda_envs\FinTrace\python.exe -m harness.tracing.export_jsonl evaluation\exp
 切换用户或刷新页面时会优先加载后端会话；`localStorage` 只补充尚未发送的新会话
 和工具展开状态等临时界面信息，不再阻止历史会话显示。
 
+历史会话采用两级加载：会话列表接口只返回标题、轮数和更新时间；用户选中会话后，
+详情接口再从统一 SQLite 批量恢复回答、工具调用、证据和工作流节点。证据不依赖浏览器
+缓存，刷新、重启前端或更换浏览器后仍可恢复；`localStorage` 仅保留未发送的空白会话
+与界面选择状态。
+
 前端位于 `fintrace-frontend/`，浏览器请求先到 Next.js Route Handler，再由服务端转发至 FastAPI，因此无需配置浏览器 CORS：
 
 ```text

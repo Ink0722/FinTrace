@@ -34,6 +34,19 @@ class SessionStore:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(sessions)")}
             if "turn_count" not in columns:
                 connection.execute("ALTER TABLE sessions ADD COLUMN turn_count INTEGER NOT NULL DEFAULT 0")
+            self._repair_swapped_legacy_columns(connection)
+
+    @staticmethod
+    def _repair_swapped_legacy_columns(connection) -> None:
+        """Repair rows imported with legacy physical column order."""
+        connection.execute("""
+            UPDATE sessions
+               SET turn_count = CAST(updated_at AS INTEGER),
+                   updated_at = CAST(turn_count AS TEXT)
+             WHERE typeof(turn_count) = 'text'
+               AND turn_count GLOB '????-??-??T*'
+               AND CAST(updated_at AS TEXT) GLOB '[0-9]*'
+        """)
 
     def load(self, session_id: str) -> dict:
         with connect_runtime(path=self.path) as connection:
@@ -44,12 +57,18 @@ class SessionStore:
             ).fetchone()
         if row is None:
             return {"current_context": {}, "conversation_summary": "", "verified_findings": [], "recent_messages": [], "turn_count": 0}
+        try:
+            turn_count = int(row["turn_count"] or 0)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Session {session_id} has invalid turn_count: {row['turn_count']!r}"
+            ) from exc
         return {
             "current_context": json.loads(row["current_context"] or "{}"),
             "conversation_summary": row["conversation_summary"] or "",
             "verified_findings": json.loads(row["verified_findings"] or "[]"),
             "recent_messages": json.loads(row["recent_messages"] or "[]"),
-            "turn_count": int(row["turn_count"] or 0),
+            "turn_count": turn_count,
         }
 
     def save(

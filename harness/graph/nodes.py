@@ -8,7 +8,7 @@ from schemas.tool_results import ToolResult
 from tools.entity_resolver import EntityResolver
 from tools.registry import execute_tool
 
-from harness.answering import build_structured_error_answer, generate_answer_with_status
+from harness.answering import build_structured_error_answer
 from harness.evidence.ledger import merge_evidence
 from harness.evidence.review import review_evidence
 from harness.guards.validation import validate_tool_result
@@ -391,14 +391,14 @@ def generate_answer_node(state: AgentState) -> AgentState:
         state.workflow_status = state.answer_status or "completed"
         return state
 
-    answer, status, error = generate_answer_with_status(state)
-    state.final_answer = answer
-    state.llm_status = status
-    if error:
-        state.errors.append(error)
-        state.workflow_status = "llm_failed"
-    else:
-        state.workflow_status = state.answer_status or "completed"
+    state.llm_status = "failed"
+    state.workflow_status = "llm_failed"
+    state.errors.append({
+        "stage": "generate_answer",
+        "error_type": "FINAL_ANSWER_SKILL_FAILED",
+        "message": "The final_answer LLM skill failed; no fallback answer was generated.",
+        "retryable": True,
+    })
     return state
 
 

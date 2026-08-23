@@ -73,6 +73,14 @@ GET /runs/{run_id}
 
 The list endpoint supplies run summaries. The detail endpoint supplies request parsing, tool executions, file and non-file evidence, workflow nodes, LLM call metadata, warnings and errors. SQLite is the sole runtime log source; JSONL is generated only when an evaluation export is needed.
 
+Historical conversations are restored in two stages. `GET /users/{user_id}/sessions`
+loads lightweight sidebar summaries, then selecting a persisted conversation calls
+`GET /users/{user_id}/sessions/{session_id}` to restore its Agent runs, tool calls,
+evidence, and workflow trace from SQLite. The detail endpoint accepts `limit` and
+`before_turn` for bounded history loading. Browser storage keeps only local unsent blank
+conversations and UI selection; it is not an evidence store and cannot override persisted
+answers. Legacy V3 rich-message cache entries are removed when a workspace is loaded.
+
 ## Streaming API events
 
 The frontend currently consumes these SSE events:

@@ -1,6 +1,7 @@
 """Local user workspaces and their session ownership."""
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -148,19 +149,88 @@ def claim_session(user_id: str, session_id: str, title: str = "新会话") -> No
 def list_user_sessions(user_id: str) -> list[dict]:
     with connect() as connection:
         sessions = [dict(row) for row in connection.execute("""
-            SELECT session_id, title, created_at, updated_at FROM user_sessions
-            WHERE user_id = ? ORDER BY updated_at DESC
+            SELECT us.session_id, us.title, us.created_at, us.updated_at,
+                   COUNT(ar.run_id) AS turn_count,
+                   COALESCE((
+                       SELECT answer FROM agent_runs latest
+                       WHERE latest.user_id = us.user_id
+                         AND latest.session_id = us.session_id
+                       ORDER BY latest.turn_id DESC, latest.created_at DESC LIMIT 1
+                   ), '') AS last_message
+              FROM user_sessions us
+              LEFT JOIN agent_runs ar
+                ON ar.user_id = us.user_id AND ar.session_id = us.session_id
+             WHERE us.user_id = ?
+             GROUP BY us.session_id, us.title, us.created_at, us.updated_at
+             ORDER BY us.updated_at DESC
         """, (user_id,))]
-        for session in sessions:
-            rows = connection.execute("""
-                SELECT run_id, turn_id, created_at, query, answer FROM agent_runs
-                WHERE user_id = ? AND session_id = ? ORDER BY turn_id, created_at
-            """, (user_id, session["session_id"])).fetchall()
-            messages = []
-            for row in rows:
-                messages.extend([
-                    {"id": f"u-{row['run_id']}", "role": "user", "content": row["query"], "createdAt": row["created_at"]},
-                    {"id": f"a-{row['run_id']}", "role": "assistant", "content": row["answer"] or "", "createdAt": row["created_at"]},
-                ])
-            session["messages"] = messages
         return sessions
+
+
+def get_user_session_detail(
+    user_id: str, session_id: str, *, limit: int = 50, before_turn: int | None = None,
+) -> dict | None:
+    """Return one owned session with batched observability children."""
+    with connect(readonly=True) as connection:
+        owner = connection.execute(
+            "SELECT user_id FROM user_sessions WHERE session_id = ?", (session_id,),
+        ).fetchone()
+        if owner is None:
+            return None
+        if owner["user_id"] != user_id:
+            raise PermissionError("Session belongs to another local user")
+        session = connection.execute(
+            "SELECT session_id, title, created_at, updated_at FROM user_sessions "
+            "WHERE user_id = ? AND session_id = ?",
+            (user_id, session_id),
+        ).fetchone()
+        parameters: list = [user_id, session_id]
+        before_clause = ""
+        if before_turn is not None:
+            before_clause = "AND turn_id < ?"
+            parameters.append(before_turn)
+        parameters.append(limit + 1)
+        rows = connection.execute(f"""
+            SELECT run_id, turn_id, created_at, query, answer, answer_status,
+                   routing_mode, termination_reason, workflow_status, llm_status,
+                   latency_ms, knowledge_cutoff
+              FROM agent_runs
+             WHERE user_id = ? AND session_id = ? {before_clause}
+             ORDER BY turn_id DESC, created_at DESC LIMIT ?
+        """, parameters).fetchall()
+        has_more = len(rows) > limit
+        runs = [dict(row) for row in reversed(rows[:limit])]
+        run_ids = [run["run_id"] for run in runs]
+        children = _session_children(connection, run_ids)
+        for run in runs:
+            run_id = run["run_id"]
+            run["tool_calls"] = children["tool_executions"].get(run_id, [])
+            run["evidence"] = children["evidence_records"].get(run_id, [])
+            run["workflow_events"] = children["workflow_events"].get(run_id, [])
+            run["llm_calls"] = children["llm_executions"].get(run_id, [])
+        return {
+            **dict(session), "runs": runs, "has_more": has_more,
+            "oldest_turn": runs[0]["turn_id"] if runs else None,
+        }
+
+
+def _session_children(connection, run_ids: list[str]) -> dict[str, dict[str, list[dict]]]:
+    tables = ("tool_executions", "evidence_records", "workflow_events", "llm_executions")
+    grouped = {table: {} for table in tables}
+    if not run_ids:
+        return grouped
+    placeholders = ",".join("?" for _ in run_ids)
+    for table in tables:
+        rows = connection.execute(
+            f"SELECT * FROM {table} WHERE run_id IN ({placeholders}) ORDER BY run_id, sequence",
+            run_ids,
+        ).fetchall()
+        for raw in rows:
+            row = dict(raw)
+            run_id = row.pop("run_id")
+            for key in list(row):
+                if key.endswith("_json"):
+                    value = row.pop(key)
+                    row[key.removesuffix("_json")] = json.loads(value) if value else None
+            grouped[table].setdefault(run_id, []).append(row)
+    return grouped

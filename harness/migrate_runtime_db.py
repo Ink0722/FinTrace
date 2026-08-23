@@ -36,14 +36,22 @@ def migrate(session_source: Path, observability_source: Path, target: Path) -> d
         SessionStore(path=temporary)
         with closing(sqlite3.connect(session_source)) as source:
             source.row_factory = sqlite3.Row
-            rows = source.execute("SELECT * FROM sessions ORDER BY session_id").fetchall()
+            rows = source.execute("""
+                SELECT session_id, current_context, conversation_summary,
+                       verified_findings, recent_messages, turn_count, updated_at
+                FROM sessions ORDER BY session_id
+            """).fetchall()
         with connect(path=temporary) as destination:
             destination.executemany("""
                 INSERT OR REPLACE INTO sessions (
                     session_id, current_context, conversation_summary, verified_findings,
                     recent_messages, turn_count, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, [tuple(row) for row in rows])
+            """, [(
+                row["session_id"], row["current_context"], row["conversation_summary"],
+                row["verified_findings"], row["recent_messages"], row["turn_count"],
+                row["updated_at"],
+            ) for row in rows])
             destination.commit()
         report = _validate(session_source, observability_source, temporary)
         os.replace(temporary, target)

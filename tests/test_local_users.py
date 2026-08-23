@@ -3,8 +3,8 @@ from fastapi import HTTPException
 
 from app.api.main import ChatRequest, _claim_chat_session
 from harness.tracing.users import (
-    claim_session, create_user, delete_session, delete_user, list_user_sessions, list_users,
-    rename_session, update_user,
+    claim_session, create_user, delete_session, delete_user, get_user_session_detail,
+    list_user_sessions, list_users, rename_session, update_user,
 )
 from harness.tracing.store import connect, import_payload
 
@@ -103,3 +103,50 @@ def test_rename_session_persists_title_without_changing_activity_time(monkeypatc
     with pytest.raises(ValueError):
         rename_session(owner["user_id"], "SESSION-RENAME", "  ")
     assert rename_session(owner["user_id"], "MISSING", "不存在") is None
+
+
+def test_session_summary_is_lightweight_and_detail_restores_trace(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("FINTRACE_RUNTIME_DB", str(tmp_path / "session-detail.sqlite3"))
+    owner = create_user("研究员")
+    other = create_user("其他用户")
+    claim_session(owner["user_id"], "SESSION-RICH", "完整历史")
+    import_payload({
+        "run_id": "RUN-RICH", "trace_id": "TRACE-RICH",
+        "user_id": owner["user_id"], "session_id": "SESSION-RICH", "turn_id": 1,
+        "query": "问题", "answer": "回答", "answer_status": "answered",
+        "tool_calls": [{
+            "tool_call_id": "CALL-1", "tool_name": "financial_analysis",
+            "operation": "metric_query", "arguments": {"company_ids": ["600519.SH"]},
+            "status": "success", "action_reason": "查询财务指标",
+        }],
+        "tool_results": [{
+            "tool_call_id": "CALL-1", "tool_name": "financial_analysis",
+            "status": "success", "data": {"record_count": 1},
+            "metrics": {"execution_time_ms": 12},
+        }],
+        "evidence": [{
+            "evidence_id": "E-1", "evidence_type": "financial_statement_metric",
+            "support_level": "direct", "source": {"company_id": "600519.SH"},
+            "fact": {"metric_code": "REVENUE", "value": 100}, "used_by": ["CALL-1"],
+        }],
+        "executed_nodes": ["load_session", "execute_one_tool", "generate_answer"],
+        "llm_calls": [{"prompt_id": "fintrace.final_answer", "status": "success"}],
+    })
+
+    summary = list_user_sessions(owner["user_id"])[0]
+    assert summary["turn_count"] == 1
+    assert summary["last_message"] == "回答"
+    assert "messages" not in summary
+
+    detail = get_user_session_detail(owner["user_id"], "SESSION-RICH")
+    run = detail["runs"][0]
+    assert run["query"] == "问题"
+    assert run["tool_calls"][0]["arguments"]["company_ids"] == ["600519.SH"]
+    assert run["tool_calls"][0]["result"]["data"]["record_count"] == 1
+    assert run["evidence"][0]["fact"]["metric_code"] == "REVENUE"
+    assert len(run["workflow_events"]) == 3
+    assert run["llm_calls"][0]["prompt_id"] == "fintrace.final_answer"
+
+    with pytest.raises(PermissionError):
+        get_user_session_detail(other["user_id"], "SESSION-RICH")
+    assert get_user_session_detail(owner["user_id"], "MISSING") is None

@@ -11,8 +11,8 @@ from harness.graph.workflow import run_agent, stream_agent
 from harness.tracing.store import get_run, list_runs
 from harness.tracing.store import DEFAULT_USER_ID
 from harness.tracing.users import (
-    claim_session, create_user, delete_session, delete_user, get_user, list_user_sessions,
-    list_users, rename_session, update_user,
+    claim_session, create_user, delete_session, delete_user, get_user,
+    get_user_session_detail, list_user_sessions, list_users, rename_session, update_user,
 )
 
 
@@ -139,6 +139,24 @@ def user_sessions(user_id: str) -> dict:
     if get_user(user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
     return {"items": list_user_sessions(user_id)}
+
+
+@app.get("/users/{user_id}/sessions/{session_id}")
+def user_session_detail(
+    user_id: str,
+    session_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    before_turn: int | None = Query(default=None, ge=1),
+) -> dict:
+    try:
+        result = get_user_session_detail(
+            user_id, session_id, limit=limit, before_turn=before_turn,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if result is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return result
 
 
 @app.delete("/users/{user_id}/sessions/{session_id}", status_code=204)

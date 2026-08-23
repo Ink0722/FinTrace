@@ -50,6 +50,11 @@ export type Conversation = {
   title: string;
   updatedAt: string;
   messages: Message[];
+  persisted?: boolean;
+  loaded?: boolean;
+  turnCount?: number;
+  hasMore?: boolean;
+  oldestTurn?: number;
 };
 
 export type LocalUser = {

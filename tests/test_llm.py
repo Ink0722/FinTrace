@@ -6,6 +6,7 @@ from schemas.tool_results import ToolResult
 from harness.streaming import JsonAnswerDeltaParser
 
 import requests
+import pytest
 
 
 def test_json_answer_delta_parser_hides_json_envelope() -> None:
@@ -76,8 +77,15 @@ def test_missing_llm_config_returns_error_not_deterministic_answer(monkeypatch) 
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     state = run_agent("analyze financial risk", session_id="TEST-NO-LLM")
     assert state.final_answer is not None
-    assert "LLM_NOT_CONFIGURED" in state.final_answer
+    assert "FINAL_ANSWER_SKILL_FAILED" in state.final_answer
     assert "不会使用确定性模板" in state.final_answer
+
+
+def test_qwen_client_without_key_raises_instead_of_returning_fallback(monkeypatch) -> None:
+    monkeypatch.delenv("QWEN_API_KEY", raising=False)
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="API key is not configured"):
+        QwenClient().chat_json([{"role": "user", "content": "json"}])
 
 
 def test_llm_timeout_warns_without_crashing(monkeypatch) -> None:

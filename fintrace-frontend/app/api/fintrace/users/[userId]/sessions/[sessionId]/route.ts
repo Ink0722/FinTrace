@@ -12,6 +12,14 @@ function relay(response: Response) {
   });
 }
 
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ userId: string; sessionId: string }> },
+) {
+  const query = new URL(request.url).search;
+  return relay(await fetch(`${await target(context)}${query}`, { cache: "no-store" }));
+}
+
 export async function DELETE(
   _: Request,
   context: { params: Promise<{ userId: string; sessionId: string }> },
