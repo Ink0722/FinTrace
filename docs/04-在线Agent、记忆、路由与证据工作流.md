@@ -1,5 +1,19 @@
 # FinTrace 在线 Agent、记忆、路由与证据工作流
 
+> 文档性质：当前实现说明。审查时以 `harness/graph/workflow.py` 的图拓扑、`schemas/agent_state.py` 的状态字段和 `tests/test_workflow.py` 为最终依据。
+
+## 代码审查索引
+
+| 审查对象 | 实现文件 | 主要测试 |
+| --- | --- | --- |
+| LangGraph 拓扑与持久化时机 | `harness/graph/workflow.py`、`harness/graph/conditions.py` | `tests/test_workflow.py`、`tests/test_langgraph_conditions.py` |
+| 节点状态变更 | `harness/graph/nodes.py` | `tests/test_workflow.py`、`tests/test_skills_integration.py` |
+| 请求、实体与期间解析 | `harness/routing/request_parser.py`、`harness/routing/entities.py`、`harness/routing/time_resolver.py`、`harness/routing/financial_period_resolver.py` | `tests/test_routing.py` |
+| 能力、直连、规划和修复 | `harness/routing/capability_registry.py`、`harness/routing/direct_gate.py`、`harness/routing/planner.py`、`harness/routing/action_validator.py` | `tests/test_agent_modules.py`、`tests/test_routing.py` |
+| Evidence Ledger 与工具校验 | `harness/evidence/`、`harness/guards/validation.py` | `tests/test_agent_modules.py`、`tests/test_workflow.py` |
+| Prompt 与 LLM Skill | `harness/prompts.py`、`harness/skills.py`、`prompts/` | `tests/test_prompt_loading.py`、`tests/test_skills_integration.py`、`tests/test_llm.py` |
+| 会话、Trace 与 SSE | `harness/memory/`、`harness/tracing/`、`harness/streaming.py` | `tests/test_local_users.py`、`tests/test_evaluation_log.py`、`tests/test_streaming_workflow.py` |
+
 ## 总体模型
 
 FinTrace 是“确定性 Harness + 受限 LLM 调查”的证据驱动 Agent：LLM 决定下一项待调查动作，程序决定可计算事实，证据决定可主张结论。系统不采用无限 ReAct，也不以多个自由对话 Agent 代替工具、规则和状态机。
@@ -14,7 +28,7 @@ load context -> resolve request -> pre-answerability
 
 ## 当前已实现并验证的运行拓扑
 
-当前入口是 `harness.graph.workflow.run_agent(query, session_id)`，内部由 LangGraph `StateGraph` 编排 16 个节点。CLI 和 FastAPI 最终都调用这个入口。下图依据当前 `workflow.py`、`conditions.py` 和实际 Trace 绘制，不表示尚未实现的目标能力。
+当前入口是 `harness.graph.workflow.run_agent(query, session_id)`，内部由 LangGraph `StateGraph` 编排 16 个节点。CLI 和 FastAPI 最终都调用这个入口。下图依据当前 `harness/graph/workflow.py`、`harness/graph/conditions.py` 和实际 Trace 绘制，不表示尚未实现的目标能力。
 
 ```mermaid
 flowchart TD
@@ -52,7 +66,7 @@ flowchart TD
     GA -->|LLM 失败| SE[structured_error<br/>返回结构化错误，不编造答案]
     SE --> PS
     PS --> END([LangGraph 本轮结束])
-    END -. run_agent 返回后 .-> TRACE[写入 JSONL Trace<br/>节点、工具、证据、缺口、模型调用与耗时]
+    END -. run_agent 返回后 .-> TRACE[写入统一 SQLite<br/>节点、工具、证据、缺口、模型调用与耗时]
 ```
 
 两条主路径的实际含义：
@@ -62,33 +76,31 @@ flowchart TD
 - **Clarification / Refusal**：缺少唯一必要条件时澄清，超出数据与能力边界时拒绝；两者均不应调用无关工具。
 - **Structured Error**：最终回答模型失败时进入结构化错误节点，不使用确定性模板冒充模型回答。
 
-### 2026-08-21 运行验证
+### 当前验证基线
 
 | 验证层 | 输入或命令 | 结果 |
 | --- | --- | --- |
-| 完整自动化回归 | `F:\conda_envs\FinTrace\python.exe -m pytest -q` | `158 passed in 13.32s` |
-| Direct 真机 | `600519.SH 2024年营业收入是多少` | 经过 11 个节点；1 次财务工具调用、1 条证据、1 次最终回答 LLM；`answered`，约 6.9 秒 |
-| Investigation 真机 | `结合公告分析600519.SH的存货风险` | 经过 18 个节点；2 次受限文档检索、5 次 LLM 调用；检索无命中后以 `document_search_budget_exhausted` 正常终止，返回 `insufficient_evidence`，约 75.9 秒 |
+| 完整自动化回归 | `F:\conda_envs\FinTrace\python.exe -m pytest -q --basetemp=.tmp_tests` | `225 passed`（2026-08-24） |
+| 历史会话恢复冒烟 | `GET /users/{user_id}/sessions/{session_id}` | 已从 SQLite 恢复回答、工具、证据、节点和 LLM 记录 |
+| 前端契约验证 | `npm run build` | Next.js 生产构建通过（2026-08-24） |
 
-因此，当前 Agent 的控制流、工具执行、证据审查、回答生成、会话保存和 Trace 落盘均可端到端跑通。调查场景“流程跑通”不等于“数据必然足以回答”：本次公告检索没有命中，系统正确暴露证据缺口而没有生成存货风险定论。Planner 本轮只选择了文档检索、未补充调用已有财务指标能力，属于后续需要通过评测改进的规划质量问题，不属于工作流中断。
+该基线证明代码路径能够端到端运行，不证明竞赛准确率已经达标。真实模型冒烟受模型、网络和数据命中影响，应把具体运行写入 `08-统一评测清单与实施记录.md`，不能用单次成功替代冻结评测。
 
 ## 会话与记忆
 
-记忆分为四层：近期原文、结构化上下文、滚动摘要与已验证事实库。结构化上下文保存公司、人物、比较对象、日期、指标、任务及待澄清项；长期事实必须附证据 ID、来源、产生轮次、有效期和置信依据。模型猜测、失败结果和未经核验的数字不得写入长期记忆。
+当前 `SessionStore` 持久化四类字段：最近消息、结构化 `current_context`、`conversation_summary` 和 `verified_findings`。结构化上下文保存公司、人物、比较对象、日期、指标和任务；模型猜测、失败结果和未经核验的数字不得进入 `verified_findings`。
 
-话题切换不应依赖固定清空提示，而由请求解析比较实体、时间和任务连续性决定。恢复历史时仅注入当前问题所需的最小上下文，并在 0.5M 累计历史压力下通过事实检索而不是整段回填保证召回。
+当前每次恢复最近 8 条消息，并由请求解析结合结构化上下文处理指代。0.5M Token 累计历史下的分级记忆检索仍是竞赛目标，仓库当前没有能够证明该指标的长上下文检索器或正式压力报告；审查时不得把 SQLite 已持久化等同于 0.5M 召回已实现。
 
 ## 请求解析与可回答性
 
 请求解析依次产出：原始问题、显式与继承的实体候选、时间锚点/范围、任务族、指标/主题、约束和歧义。实体消歧必须返回可审计候选，不能在公司名称不唯一时默认选择。相对时间应相对会话时间或明确锚点解析。
 
-可回答性状态分为：
+`PreAnswerability` 的代码状态只有三种：
 
-- `supported`：数据和操作足以获得所需事实；
-- `partially_supported`：仅部分子问题有可验证来源；
-- `clarification_needed`：缺少主体、时间、比较对象或其他唯一条件；
-- `unsupported`：系统没有对应数据、权限或能力；
-- `unsafe_prediction`：请求要求预测、投资指令或不可验证判断。
+- `routeable`：存在可用能力且必要参数完整，或可以进入调查模式继续取证；
+- `clarification_required`：缺失会导致主体、任务或比较维度无法唯一确定的必要参数；
+- `unsupported`：系统没有对应数据或能力。实时行情、用户账户和无证据预测由任务族映射到此状态。
 
 在线回答状态另行记录 `answered`、`partially_answered`、`clarification_required`、`unsupported`、`insufficient_evidence`、`failed`，不得与离线评测标签混用。
 

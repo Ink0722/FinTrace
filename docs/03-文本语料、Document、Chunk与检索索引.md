@@ -2,6 +2,19 @@
 
 本文件定义竞赛文本从原始材料到在线可检索证据的唯一目标流程。文本标准化、Chunk 构建和索引构建是三个独立阶段，任何阶段不得重写上游事实。
 
+## 代码审查索引
+
+| 环节 | 实现文件 | 核心检查 |
+| --- | --- | --- |
+| Document 统一 | `data_pipeline/documents/document_builder.py`、`data_pipeline/documents/cleaner.py` | 字段映射、正文不改写、质量标记 |
+| Chunk 切分 | `data_pipeline/documents/chunk_builder.py`、`data_pipeline/documents/chunker.py`、`data_pipeline/documents/embedding_text.py` | 段落边界、稳定 ID、Embedding 输入版本 |
+| 语料入库 | `data_pipeline/documents/corpus_store.py`、`data_pipeline/documents/sqlite_store.py` | Chunk/Document 对应与事务写入 |
+| Batch Embedding | `data_pipeline/documents/build_index.py`、`data_pipeline/documents/batch_embedding_client.py` | `custom_id` 复原、失败记录、输入哈希 |
+| BM25/FTS5 | `data_pipeline/documents/build_bm25_index.py`、`tools/document_search/fts5_search.py` | tokenizer 版本和 contentless FTS5 |
+| 在线混合检索 | `tools/document_search/interface.py`、`tools/document_search/search.py`、`tools/document_search/vector_search.py` | 过滤、防前视、RRF、证据定位 |
+
+构建命令和产物目录以 `data_pipeline/README.md` 为准；字段模型以 `schemas/document.py` 及构建器真实输出为准。
+
 ## 输入、边界与产物
 
 输入包括公告索引及授权正文、财报附注/审计报告/问询函、研报元数据与摘要，以及后续合法上传的 PDF、DOCX、TXT、Markdown。公告无正文时只保留标题、日期、类型和来源，不能伪造正文；研报摘要不能被扩写为研报全文。
