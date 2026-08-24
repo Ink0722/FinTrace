@@ -2,6 +2,8 @@
 
 本文给出 FinTrace 的正式评测口径、人工标注表、计算公式和结果模板，可直接作为技术白皮书“实验设计与评测”章节的底稿。竞赛阈值以 [00-竞赛要求与验收口径.md](00-竞赛要求与验收口径.md) 为准；问题集字段和标注纪律以 [05-评测、金标与人工标注规范.md](05-评测、金标与人工标注规范.md) 为准；实际批次、失败案例和结果登记在 [08-统一评测清单与实施记录.md](08-统一评测清单与实施记录.md)。
 
+面向技术白皮书的叙事正文见 [10-金融智能体评测体系与实验设计.md](10-金融智能体评测体系与实验设计.md)。本文继续保留为内部评测操作手册和填表模板。
+
 > 本文定义“怎样测”，不宣称当前已经达标。只有冻结代码、数据、Prompt、模型和评测集后生成的正式报告，才能写入达标结论。
 
 ## 1. 评测目标与分层
@@ -30,12 +32,12 @@
 | Python / 依赖锁定版本 |  |
 | 主回答模型及参数 |  |
 | Planner 模型及参数 |  |
-| Prompt manifest / 各 Prompt 版本 |  |
-| `knowledge_cutoff` |  |
-| 问题集路径、版本、SHA-256 |  |
-| 数据与索引 manifest |  |
-| 风险规则版本 |  |
-| 实体映射版本 |  |
+| Prompt manifest / 各 Prompt 版本 | `manifest 1.2.0`；`global_policy 1.3.0`；`request_parser 1.5.0`；`next_action_planner 1.5.0`；`evidence_reviewer 1.4.0`；`action_repair 1.3.0`；`final_answer 1.4.0` |
+| `knowledge_cutoff` | `2026-05-28`（当前项目默认值，正式批次启动时仍需冻结） |
+| 问题集路径、版本、SHA-256 | `evaluation/questions/questions_annotated_v1.jsonl`；`v1`；`fa59f31787e010f441737d362bc2a6c09eadc6e92ac825a66f69fefe5b1897d8` |
+| 数据与索引 manifest | `document_search/chunks-v2`；`financial_analysis/financial-metrics-v1`；`ownership_analysis/ownership-holdings-v3`；`event_timeline/announcement-events-v3.1`；`research_analysis/research-views-v1` |
+| 风险规则版本 | `financial-risk-rules-v2`（8条规则，当前状态为未校准） |
+| 实体映射版本 | `entity-master-v1`（6,987家上市公司，715条已确认股东公司桥接） |
 | 操作系统、CPU、内存、磁盘 |  |
 | 网络条件 |  |
 | 随机种子 / 重复次数 |  |
@@ -44,16 +46,49 @@
 
 | 子集 | 样本单位 | 总数 | 开发集 | 测试集 | 正样本 | 负样本 | 数据不足 | 备注 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| 多轮问答 | Turn / Session |  |  |  |  |  |  |  |
+| 多轮问答 | Turn / Session | 1,410 Turn / 35 Session |  |  |  |  |  | 每个Session为12～85轮，35个Session均不少于10轮 |
 | 0.5M 长上下文压力集 | Session |  |  |  |  |  |  |  |
-| 工具路由 | Turn |  |  |  |  |  |  |  |
+| 工具路由 | Turn | 1,410 |  |  |  |  |  | 342条`valid_tools`非空；其余1,068条仍需结合answerability复核是否属于no-call |
 | 自纠错故障注入 | Fault case |  |  |  |  |  |  |  |
-| 股权穿透 | Query case |  |  |  |  |  |  | 深度必须大于 3 |
-| 事件时间线 | Company-window case |  |  |  |  |  |  |  |
-| 财务风险 | Company-period-risk row |  |  |  |  |  |  |  |
+| 股权穿透 | Query case |  |  |  |  |  |  | 已有21个`penetration`候选Turn，但尚无深度>3逐跳路径金标 |
+| 事件时间线 | Company-window case |  |  |  |  |  |  | 已有143个事件工具候选Turn：87条含`event_query`、67条含`event_cluster`，两类有重叠 |
+| 财务风险 | Company-period-risk row |  |  |  |  |  |  | 已有38个`risk_scan`候选Turn，但尚未拆成公司-期间-风险类型正负金标 |
 | 财务报告盲评 | Report |  |  |  |  |  |  |  |
 
 现有 `evaluation/questions/questions_annotated_v1.jsonl` 继续作为问题与基础标注的唯一主表：`required_entities`、`required_date`、`valid_tools` 和 `required_chunk_ids` 分别服务于实体/时间核对、允许的工具范围和证据定位。关键点、故障注入、股权路径、事件节点、风险标签和专家评分使用下文的独立表，并通过 `case_id` 关联；不把所有专项金标重新塞回问题 JSONL。
+
+### 2.3 当前问题集标注盘点
+
+以下数字来自当前 `questions_annotated_v1.jsonl`，属于已有数据盘点，不是Agent评测结果。
+
+| 项目 | 当前数量 | 说明 |
+| --- | ---: | --- |
+| Turn | 1,410 | 分属35个Session |
+| `answerable` | 370 | 需要回答事实或分析问题 |
+| `unanswerable` | 864 | 应识别数据或能力边界 |
+| `clarification_required` | 170 | 可先给部分结果并说明缺失参数 |
+| `answerability`为空 | 6 | 正式运行前必须补标或排除 |
+| `annotation_status=completed` | 1,408 |  |
+| `annotation_status=review_required` | 2 | 正式运行前必须仲裁 |
+| `required_entities`非空 | 426 |  |
+| `required_date`非空 | 2 | 其余问题可能不需要日期，也可能仍需复核时间标注完整性 |
+| `valid_tools`非空 | 342 | 允许多种工具，因此下表各operation数量可以重叠 |
+| `required_chunk_ids`非空 | 142 | 共引用1,765次Chunk；不能直接替代关键事实金标 |
+
+| 已标注operation | 涉及Turn数 |
+| --- | ---: |
+| `document_search.search` | 245 |
+| `financial_analysis.metric_query` | 199 |
+| `financial_analysis.metric_compare` | 127 |
+| `financial_analysis.risk_scan` | 38 |
+| `ownership_analysis.holding_query` | 33 |
+| `ownership_analysis.holding_compare` | 19 |
+| `ownership_analysis.penetration` | 21 |
+| `event_timeline.event_query` | 87 |
+| `event_timeline.event_cluster` | 67 |
+| `research_analysis.view_query` | 0 |
+
+`research_analysis.view_query`为0仅表示当前问题集没有该operation标注，不能据此断定它不需要评测。所有专项表仍保持空白，直到产生独立人工金标；不会用当前工具输出反向填写。
 
 开发集可用于规则、阈值和 Prompt 调整；冻结测试集只运行一次。发现数据错误时先记录勘误，再决定整批重跑，禁止只重跑失败样本。
 
@@ -289,11 +324,11 @@ Risk F1 = 2 * Precision * Recall / (Precision + Recall)
 
 | risk_type | 赛题要求 | 数据字段可用 | 规则已实现 | 正样本 | 负样本 | 是否进入正式测试 | 缺口说明 |
 | --- | --- | --- | --- | ---: | ---: | --- | --- |
-| 利润与经营现金流背离 | 是 |  |  |  |  |  |  |
-| 存货与收入背离 | 是 |  |  |  |  |  |  |
-| 应收账款与收入背离 | 是 |  |  |  |  |  |  |
-| 异常费用或汇兑 | 是 |  |  |  |  |  |  |
-| 异常关联交易 | 是 |  |  |  |  |  |  |
+| 利润与经营现金流背离 | 是 | 是 | 是：`CASH_PROFIT_DIVERGENCE` |  |  |  | 阈值尚未用开发集校准 |
+| 存货与收入背离 | 是 | 是 | 是：`INVENTORY_REVENUE_DIVERGENCE` |  |  |  | 阈值尚未用开发集校准 |
+| 应收账款与收入背离 | 是 | 是 | 是：`RECEIVABLE_REVENUE_DIVERGENCE` |  |  |  | 阈值尚未用开发集校准 |
+| 异常费用或汇兑 | 是 | 当前财务索引无对应标准指标 | 否 |  |  |  | 现有规则不能评价该风险类型 |
+| 异常关联交易 | 是 | 当前无结构化关联交易指标 | 否 |  |  |  | 不得把缺少规则改标为`insufficient_data`以规避FN |
 
 ### 3.10 财务排雷报告专家盲评优秀率
 
