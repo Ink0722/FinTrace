@@ -214,6 +214,27 @@ def test_period_resolver_uses_all_available_fy_when_unspecified(financial_index)
     assert resolved.period_resolution_mode == "all_available_fy"
 
 
+def test_period_resolver_uses_latest_available_period_for_metric_query(financial_index) -> None:
+    parsed = ParsedRequest(
+        raw_query="000001.SZ最新营业收入", entities=["000001.SZ"], metrics=["REVENUE"],
+        task_family="financial_metric_query", time_mode="latest", end_date="2025-04-30",
+    )
+    resolved = resolve_financial_periods(parsed, "2025-04-30")
+    assert resolved.periods == ["2025-03-31"]
+    assert resolved.target_period == "2025-03-31"
+    assert resolved.period_resolution_mode == "latest_available"
+
+
+def test_period_resolver_uses_latest_two_comparable_periods_for_compare(financial_index) -> None:
+    parsed = ParsedRequest(
+        raw_query="000001.SZ营业收入最近有什么变化", entities=["000001.SZ"], metrics=["REVENUE"],
+        task_family="financial_metric_compare", time_mode="recent", end_date="2025-04-30",
+    )
+    resolved = resolve_financial_periods(parsed, "2025-04-30")
+    assert resolved.periods == ["2023-12-31", "2024-12-31"]
+    assert resolved.period_resolution_mode == "latest_two_comparable"
+
+
 def test_risk_scan_allows_single_period_and_degrades_pair_rules(financial_index) -> None:
     result = financial_analysis(_call({
         "operation": "risk_scan", "company_ids": ["000002.SZ"],

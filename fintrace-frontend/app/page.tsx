@@ -230,6 +230,15 @@ export default function Home() {
         item.id === active.id ? { ...item, persisted: true, loaded: true } : item
       ));
     } catch (error) {
+      const recovered = await recoverPersistedTurn(
+        activeUserId, active.id, query, userMessage.createdAt,
+      );
+      if (recovered) {
+        setConversations((items) => items.map((item) =>
+          item.id === active.id ? recovered : item
+        ));
+        return;
+      }
       const message = error instanceof Error ? error.message : "发生未知错误。";
       updateAssistant({
         content: `### 无法完成本轮请求\n\n${message}\n\n请检查后端服务状态后重试。`,
@@ -293,6 +302,38 @@ export default function Home() {
       {drawerOpen && <button aria-label="关闭证据抽屉" className="drawer-backdrop" onClick={() => setDrawerOpen(false)} />}
     </main>
   );
+}
+
+async function recoverPersistedTurn(
+  userId: string,
+  sessionId: string,
+  query: string,
+  requestStartedAt: string,
+): Promise<Conversation | null> {
+  // A browser/proxy stream can close just before the backend persists the turn.
+  // Briefly poll the durable session before presenting the request as failed.
+  const delays = [0, 1_000, 2_000, 4_000, 8_000];
+  for (const delay of delays) {
+    if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay));
+    try {
+      const detail = await userService.sessionDetail(userId, sessionId);
+      const messages = detail.messages;
+      for (let index = messages.length - 2; index >= 0; index -= 1) {
+        const user = messages[index];
+        const assistant = messages[index + 1];
+        if (
+          user?.role === "user" && assistant?.role === "assistant"
+          && user.content === query
+          && Date.parse(user.createdAt) >= Date.parse(requestStartedAt) - 1_000
+        ) {
+          return detail;
+        }
+      }
+    } catch {
+      // The backend may still be completing or persisting the run.
+    }
+  }
+  return null;
 }
 
 function mergeWorkspaceConversations(

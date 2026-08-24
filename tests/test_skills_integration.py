@@ -25,7 +25,7 @@ def _record(skill: str) -> LlmCallRecord:
     )
 
 
-def test_all_six_core_prompts_materialized() -> None:
+def test_all_seven_core_prompts_materialized() -> None:
     from harness.prompts import core_skill_files
 
     assert set(core_skill_files()) == {
@@ -34,6 +34,7 @@ def test_all_six_core_prompts_materialized() -> None:
         "04_evidence_reviewer.md",
         "05_action_repair.md",
         "06_final_answer.md",
+        "07_memory_summarizer.md",
     }
 
 

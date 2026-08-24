@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.request_parser
-version: 1.5.0
+version: 1.7.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -22,7 +22,9 @@ output_schema: ParsedRequest
 你可能收到：
 - `raw_query`：当前用户消息；
 - `recent_context`：有限窗口的历史对话；
+- `conversation_summary`：更早对话的压缩摘要；
 - `current_context`：Session 中当前激活的实体、期间、指标、主题和比较对象；
+- `memory_hints`：与规则解析主体匹配、且绑定 Evidence ID 的历史事实提示；
 - `deterministic_entity_candidates`：由 Regex / Alias Index 已经解析出的实体候选；
 - `deterministic_time_candidates`：由确定性规则已经解析出的日期或期间候选。
 
@@ -33,12 +35,16 @@ output_schema: ParsedRequest
 - 如果 Query 使用"它""这家公司""该公司"或省略主体，只在 Context 能唯一确定指代对象时继承历史实体。
 - 如果存在多个合理指代对象，必须保留 unresolved 状态并记录该引用。
 - 不得虚构公司代码或人物 ID。
+- 历史摘要和 `memory_hints` 只用于恢复省略语境；当前用户明确输入新主体或新任务时，以本轮输入为准。
+- `memory_hints` 不等于本轮 Evidence，不得据此直接回答金融事实。
 
 2. Time Resolution
 - 如果 Runtime 已提供确定性时间候选，优先使用该结果。
 - 用户要求比较时，必须保留多个独立 Period。
 - 如果 Runtime 已经标准化 `latest` 或相对时间表达，不得自行再次转换。
 - 无法可靠推断报告期时，不得虚构 Period。
+- `time_mode`只允许 `unspecified`、`explicit`、`today`、`latest`、`recent`。Runtime 已给出确定性模式时原样保留。
+- “今天/今日”使用 Runtime 注入的知识截止日作为参考日期；“最新/近期”表示在截止日前选择可用记录，不得把知识截止日伪装成财务报告期。
 
 3. Task Family
 识别用户语义任务，而不是 Tool 实现。优先从以下 task family 中选择：
@@ -88,6 +94,8 @@ output_schema: ParsedRequest
 
 6. 看起来可能 Unsupported 的请求
 你可以识别实时行情、用户账户、确定性预测等语义意图，但不要在本 Skill 判断 FinTrace 是否真的支持。Capability 是否可用由 Pre-Answerability 层决定。
+- 一个请求同时包含支持和不支持部分时，应保留可支持的 `task_family`，并将不可支持部分写入 `capability_gaps`，不得因为局部缺口放弃整个请求。
+- `capability_gaps`只记录能力缺口，不记录普通的证据缺口。可用值包括 `realtime_market_data_unavailable`、`deterministic_investment_recommendation_unavailable`、`user_account_operation_unavailable`。
 
 【输出】
 严格返回一个符合下列 Schema 的 JSON 对象：
@@ -99,6 +107,7 @@ output_schema: ParsedRequest
   "as_of_dates": ["YYYY-MM-DD"],
   "start_date": "YYYY-MM-DD or null",
   "end_date": "YYYY-MM-DD or null",
+  "time_mode": "unspecified | explicit | today | latest | recent",
   "task_family": "string",
   "metrics": ["string"],
   "focus_topics": ["string"],
@@ -111,6 +120,7 @@ output_schema: ParsedRequest
   "requires_investigation": true,
   "requires_realtime": false,
   "requires_prediction": false,
+  "capability_gaps": ["string"],
   "unresolved_references": ["string"],
   "missing_slots": ["string"]
 }

@@ -66,6 +66,38 @@ def test_parse_realtime_and_prediction_families() -> None:
     assert parse_request("明年会涨吗", resolver=RESOLVER).requires_prediction
 
 
+def test_mixed_supported_and_realtime_request_keeps_supported_task() -> None:
+    parsed = parse_request("600519.SH最新营业收入和现在股价是多少", resolver=RESOLVER, knowledge_cutoff="2026-05-28")
+    assert parsed.task_family == "financial_metric_query"
+    assert parsed.time_mode == "latest"
+    assert parsed.end_date == "2026-05-28"
+    assert parsed.capability_gaps == ["realtime_market_data_unavailable"]
+    assert check_answerability(parsed).status == "routeable_with_gaps"
+
+
+def test_mixed_supported_and_account_request_keeps_supported_task() -> None:
+    parsed = parse_request("600519.SH营业收入是多少，怎么修改银行卡", resolver=RESOLVER)
+    assert parsed.task_family == "financial_metric_query"
+    assert parsed.capability_gaps == ["user_account_operation_unavailable"]
+    assert check_answerability(parsed).status == "routeable_with_gaps"
+
+
+def test_pure_account_request_remains_unsupported() -> None:
+    parsed = parse_request("如何修改银行卡", resolver=RESOLVER)
+    assert parsed.task_family == "user_account_query"
+    assert parsed.entities == []
+    assert check_answerability(parsed).status == "unsupported"
+
+
+def test_entity_only_request_is_explored_instead_of_immediately_clarified() -> None:
+    parsed = parse_request("贵州茅台", resolver=RESOLVER)
+    assert parsed.entities == ["600519.SH"]
+    assert parsed.task_family == "unknown"
+    pre = check_answerability(parsed)
+    assert pre.status == "routeable"
+    assert is_investigation(parsed)
+
+
 def test_research_questions_route_by_structured_view_vs_source_text() -> None:
     view = parse_request("机构如何看待601033.SH的盈利前景", resolver=RESOLVER)
     assert view.task_family == "research_view_query"

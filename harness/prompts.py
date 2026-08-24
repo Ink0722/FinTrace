@@ -29,7 +29,7 @@ SKILL_REGISTRY: dict[str, tuple[str, str, bool]] = {
     "evidence_reviewer": ("04_evidence_reviewer.md", "EvidenceReview", True),
     "action_repair": ("05_action_repair.md", "ActionRepairResult", True),
     "final_answer": ("06_final_answer.md", "FinalAnswer", True),
-    "memory_summarizer": ("07_memory_summarizer.md", "MemoryUpdate", False),
+    "memory_summarizer": ("07_memory_summarizer.md", "MemoryUpdate", True),
     "search_query_rewriter": ("08_search_query_rewriter.md", "SearchQuerySpec", False),
 }
 

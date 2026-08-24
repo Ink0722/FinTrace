@@ -13,6 +13,7 @@ from harness.evidence.ledger import merge_evidence
 from harness.evidence.review import review_evidence
 from harness.guards.validation import validate_tool_result
 from harness.memory.session_store import SessionStore
+from harness.memory.manager import prepare_session_memory, select_relevant_findings
 from harness.runtime_context import final_answer_runtime, planner_runtime, repair_runtime, reviewer_runtime
 from harness.routing.action_validator import repair_action, validate_action
 from harness.routing.answerability import check_answerability, is_investigation
@@ -55,13 +56,17 @@ def resolve_request_node(state: AgentState) -> AgentState:
             return None
         runtime = {
             "raw_query": raw_query,
+            "recent_context": [item.model_dump() for item in state.messages[:-1][-8:]],
+            "conversation_summary": state.conversation_summary,
             "current_context": current_context.model_dump() if current_context else {},
+            "memory_hints": select_relevant_findings(state.previous_findings, rule_parsed),
             "deterministic_entity_candidates": [item.model_dump() for item in rule_parsed.entity_candidates],
             "deterministic_time_candidates": {
                 "periods": rule_parsed.periods,
                 "as_of_dates": rule_parsed.as_of_dates,
                 "start_date": rule_parsed.start_date,
                 "end_date": rule_parsed.end_date,
+                "time_mode": rule_parsed.time_mode,
                 "unresolved": rule_parsed.unresolved_references,
             },
         }
@@ -78,6 +83,7 @@ def resolve_request_node(state: AgentState) -> AgentState:
     )
     parsed = resolve_financial_periods(parsed, state.knowledge_cutoff)
     state.parsed_request = parsed
+    state.relevant_memories = select_relevant_findings(state.previous_findings, parsed)
     state.user_request.intent = parsed.task_family
 
     # Carryover: later turns can resolve pronouns against this context.
@@ -99,14 +105,16 @@ def check_pre_answerability_node(state: AgentState) -> AgentState:
     state.executed_nodes.append("check_pre_answerability")
     state.pre_answerability = check_answerability(state.parsed_request)
     state.candidate_capabilities = candidate_capabilities(state.parsed_request.task_family)
-    if state.pre_answerability.status == "routeable" and is_investigation(state.parsed_request):
+    if state.pre_answerability.status == "routeable_with_gaps" or (
+        state.pre_answerability.status == "routeable" and is_investigation(state.parsed_request)
+    ):
         # Investigation adapts across evidence types: offer the broad implemented set,
         # otherwise the planner cannot switch to documents/events when a slot is missing.
         state.candidate_capabilities = candidate_capabilities("financial_investigation")
         for extra in ("ownership_snapshot", "ownership_compare"):
             if extra not in state.candidate_capabilities:
                 state.candidate_capabilities.append(extra)
-    state.next_action = state.pre_answerability.status  # routeable | clarification_required | unsupported
+    state.next_action = state.pre_answerability.status
     return state
 
 
@@ -158,6 +166,13 @@ def plan_next_action_node(state: AgentState) -> AgentState:
         state.current_action = _plan_via_llm_or_rules(state)
     action = state.current_action
     if action.action == "clarify":
+        if state.evidence_ledger:
+            state.warnings.append(action.reason or "请求仍有未明确部分。")
+            state.answer_status = "partially_answered"
+            state.review_status = "partial"
+            state.termination_reason = state.termination_reason or "partial_answer_before_clarification"
+            state.next_action = "answer"
+            return state
         state.pre_answerability = state.pre_answerability.model_copy(
             update={
                 "status": "clarification_required",
@@ -195,6 +210,16 @@ def _plan_via_llm_or_rules(state: AgentState) -> AgentAction:
     if record is not None:
         state.llm_calls.append(record)
     if isinstance(action, AgentAction) and action.action in {"call_tool", "finish", "clarify", "unsupported"}:
+        if action.action == "clarify":
+            exploratory = plan_next_action(state)
+            if exploratory.action == "call_tool":
+                state.warnings.append("仍有可执行调查动作，已延后澄清并先收集证据。")
+                return exploratory
+        if action.action == "finish" and _company_overview_progress(state) == "continue":
+            exploratory = plan_next_action(state)
+            if exploratory.action == "call_tool":
+                state.warnings.append("公司概览尚未覆盖两个资料方面，已继续执行低成本调查。")
+                return exploratory
         return action
     if record is not None and record.status != "failed":
         state.warnings.append("LLM planner 输出非法，已回退规则调查队列。")
@@ -353,11 +378,17 @@ def review_evidence_node(state: AgentState) -> AgentState:
     document_searches = sum(
         1 for entry in state.tool_call_history if entry.tool_name == "document_search" and entry.operation == "search"
     )
+    overview_progress = _company_overview_progress(state)
     if state.routing_mode == "direct":
         state.next_action = "answer"
     elif action is not None and action.action == "finish":
         state.termination_reason = state.termination_reason or "planner_finish"
         state.next_action = "answer"
+    elif overview_progress == "complete":
+        state.termination_reason = state.termination_reason or "company_overview_coverage_reached"
+        state.next_action = "answer"
+    elif overview_progress == "continue":
+        state.next_action = "plan"
     elif non_retryable_failure:
         state.termination_reason = state.termination_reason or "non_retryable_tool_failure"
         state.next_action = "answer"
@@ -375,6 +406,32 @@ def review_evidence_node(state: AgentState) -> AgentState:
     else:
         state.next_action = "plan"
     return state
+
+
+def _company_overview_progress(state: AgentState) -> str | None:
+    """Keep a company-only overview bounded while preventing one-source early exit."""
+    parsed = state.parsed_request
+    if not parsed or parsed.task_family != "unknown" or len(parsed.entities) != 1:
+        return None
+    expected = {
+        ("event_timeline", "event_query"),
+        ("research_analysis", "view_query"),
+        ("ownership_analysis", "holding_query"),
+    }
+    attempted = {(entry.tool_name, entry.operation) for entry in state.tool_call_history}
+    expected_tools = {tool_name for tool_name, _ in expected}
+    evidence_tools = {
+        result.tool_name.value
+        for result in state.tool_results
+        if result.status.value == "success"
+        and result.evidence
+        and result.tool_name.value in expected_tools
+    }
+    if len(evidence_tools) >= 2:
+        return "complete"
+    if state.total_tool_calls < state.max_total_tool_calls and expected - attempted:
+        return "continue"
+    return "exhausted"
 
 
 def generate_answer_node(state: AgentState) -> AgentState:
@@ -415,6 +472,7 @@ def _answer_status_from_review_state(state: AgentState) -> str:
 
 def persist_session_node(state: AgentState) -> AgentState:
     state.executed_nodes.append("persist_session")
+    prepare_session_memory(state)
     store = SessionStore()
     store.save(
         state.session_id,

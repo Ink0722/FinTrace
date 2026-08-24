@@ -12,7 +12,7 @@
 | 能力、直连、规划和修复 | `harness/routing/capability_registry.py`、`harness/routing/direct_gate.py`、`harness/routing/planner.py`、`harness/routing/action_validator.py` | `tests/test_agent_modules.py`、`tests/test_routing.py` |
 | Evidence Ledger 与工具校验 | `harness/evidence/`、`harness/guards/validation.py` | `tests/test_agent_modules.py`、`tests/test_workflow.py` |
 | Prompt 与 LLM Skill | `harness/prompts.py`、`harness/skills.py`、`prompts/` | `tests/test_prompt_loading.py`、`tests/test_skills_integration.py`、`tests/test_llm.py` |
-| 会话、Trace 与 SSE | `harness/memory/`、`harness/tracing/`、`harness/streaming.py` | `tests/test_local_users.py`、`tests/test_evaluation_log.py`、`tests/test_streaming_workflow.py` |
+| 会话、记忆、Trace 与 SSE | `harness/memory/`、`harness/tracing/`、`harness/streaming.py` | `tests/test_memory_manager.py`、`tests/test_local_users.py`、`tests/test_evaluation_log.py`、`tests/test_streaming_workflow.py` |
 
 ## 总体模型
 
@@ -39,7 +39,7 @@ flowchart TD
     PA -->|需要补充必要条件| BC[build_clarification<br/>生成澄清问题]
     PA -->|数据或能力不支持| BR[build_refusal<br/>生成边界说明]
     PA -->|可以路由| RM[route_mode<br/>Gate C 路径分流]
-    BC --> PS[persist_session<br/>保存会话]
+    BC --> PS[persist_session<br/>更新轻量记忆并保存会话]
     BR --> PS
 
     RM -->|Direct：参数完整且动作唯一| VA[validate_action<br/>校验能力、参数、实体、截止日、重复与预算]
@@ -80,7 +80,7 @@ flowchart TD
 
 | 验证层 | 输入或命令 | 结果 |
 | --- | --- | --- |
-| 完整自动化回归 | `F:\conda_envs\FinTrace\python.exe -m pytest -q --basetemp=.tmp_tests` | `225 passed`（2026-08-24） |
+| 完整自动化回归 | `F:\conda_envs\FinTrace\python.exe -m pytest -q --basetemp runtime\pytest-release` | `239 passed`（2026-08-24） |
 | 历史会话恢复冒烟 | `GET /users/{user_id}/sessions/{session_id}` | 已从 SQLite 恢复回答、工具、证据、节点和 LLM 记录 |
 | 前端契约验证 | `npm run build` | Next.js 生产构建通过（2026-08-24） |
 
@@ -88,23 +88,30 @@ flowchart TD
 
 ## 会话与记忆
 
-当前 `SessionStore` 持久化四类字段：最近消息、结构化 `current_context`、`conversation_summary` 和 `verified_findings`。结构化上下文保存公司、人物、比较对象、日期、指标和任务；模型猜测、失败结果和未经核验的数字不得进入 `verified_findings`。
+当前采用轻量分层记忆，继续复用 `sessions` 表中的四类字段：近期消息、结构化 `current_context`、`conversation_summary` 和 `verified_findings`，没有新增向量索引或独立记忆数据库。
 
-当前每次恢复最近 8 条消息，并由请求解析结合结构化上下文处理指代。0.5M Token 累计历史下的分级记忆检索仍是竞赛目标，仓库当前没有能够证明该指标的长上下文检索器或正式压力报告；审查时不得把 SQLite 已持久化等同于 0.5M 召回已实现。
+近期消息同时保存用户问题和 Agent 最终回答，常规上限为 12 条。每 6 轮、窗口超过 12 条或字符数超过阈值时，`memory_summarizer` 将即将移出窗口的消息与旧摘要合并；摘要成功后保留最近 8 条，调用失败时保留最近 12 条并记录警告，不影响已经生成的本轮回答。如果本轮已有其他模型调用失败，系统延后摘要，避免在收尾阶段重复等待故障接口。摘要 Skill 复用 `QWEN_PLANNER_*` 配置。
+
+`current_context` 保存公司、人物、比较对象、日期、指标和任务，支持唯一主体下的代词继承。本轮明确主体和任务优先于历史上下文，不使用机械的新话题清空提示。
+
+`verified_findings` 由程序直接从 Evidence Ledger 提取，而不是从最终回答反向抽取。每项保存公司、主题、精简事实、Evidence ID、来源工具和来源轮次；没有 Evidence ID 的内容、模型猜测和失败结果不能写入。每个 Session 最多保留 100 项，Planner 按公司精确匹配并优先选择同任务主题的最多 8 项作为 `memory_hints`。
+
+滚动摘要和 `memory_hints` 只用于恢复语境和选择核验工具，不属于本轮 Evidence。财务数值、股权关系、事件和研报观点仍必须由当前工具重新取得证据后才能进入回答。该实现能够压缩累计历史，但仓库尚无 50K 至 500K Tokens 正式压力报告，因此不能仅凭持久化和摘要功能宣称 0.5M 指标已经达标。
 
 ## 请求解析与可回答性
 
-请求解析依次产出：原始问题、显式与继承的实体候选、时间锚点/范围、任务族、指标/主题、约束和歧义。实体消歧必须返回可审计候选，不能在公司名称不唯一时默认选择。相对时间应相对会话时间或明确锚点解析。
+请求解析依次产出：原始问题、显式与继承的实体候选、时间锚点/范围、时间模式、任务族、指标/主题、能力缺口、约束和歧义。实体消歧必须返回可审计候选，不能在公司名称不唯一时默认选择。`time_mode` 用于保留用户的时间语义：`explicit` 表示明确日期或报告期，`today` 固定解析为知识截止日，`latest` 和 `recent` 表示在知识截止日前选择最新或近期可用记录，`unspecified` 表示用户未提出时间要求。知识截止日是数据边界，不得直接伪装成财务报告期。
 
-`PreAnswerability` 的代码状态只有三种：
+`PreAnswerability` 有四种代码状态：
 
 - `routeable`：存在可用能力且必要参数完整，或可以进入调查模式继续取证；
+- `routeable_with_gaps`：请求仍有可执行部分，但包含能力边界或非阻断性的参数缺口；系统先调查可支持部分，并在答案中披露未覆盖内容；
 - `clarification_required`：缺失会导致主体、任务或比较维度无法唯一确定的必要参数；
 - `unsupported`：系统没有对应数据或能力。实时行情、用户账户和无证据预测由任务族映射到此状态。
 
 在线回答状态另行记录 `answered`、`partially_answered`、`clarification_required`、`unsupported`、`insufficient_evidence`、`failed`，不得与离线评测标签混用。
 
-`clarification_required` 只用于缺少的信息会导致主体、任务或比较维度无法唯一确定、因而不能可靠执行的情况。系统已经能够按确定性口径执行但覆盖不完整时，应执行并返回 `partially_answered`；工具运行后仍无核心证据时使用 `insufficient_evidence`，不能用澄清代替数据不足。
+`clarification_required` 只用于缺少的信息会导致主体或比较对象无法可靠确定，而且不存在任何合法调查动作的情况。仅输入唯一公司名称时，系统将其视为有限资料概览，依次尝试事件、研报观点和主要股东快照，而不是立即要求用户选择方向。请求同时包含可支持与不可支持部分时，`capability_gaps` 只记录实时行情、确定性投资建议等能力缺口；系统继续回答财务、事件、研报或股权部分。工具运行后仍无核心证据时使用 `insufficient_evidence`，不能用澄清代替数据不足。
 
 ## 工具规划与校验
 
@@ -114,7 +121,7 @@ flowchart TD
 
 综合财务风险调查先由 `financial_analysis.risk_scan` 返回v2逐期间观察值、状态、阈值和输入证据，再用 `event_timeline` 检查问询、处罚、更正和审计事件；只有用户需要原因、金额、解释或整改细节时，才将文档类型限定为 `announcement` 调用 `document_search`。`research_analysis` 仅在用户询问机构观点或 Reviewer 明确提出观点证据缺口时使用。`insufficient_data` 与 `not_applicable` 均不得表述为低风险；阈值未完成金标校准前不生成综合风险分。
 
-风险期间由确定性解析器在Gate B前完成。一个用户目标期间扩展为截至该目标的全部同口径历史；未指定期间时优先采用截止日前全部可用年度，没有年度数据时选择数据最多的一组同口径中报或季报；多个明确期间保持原样。不同累计口径不会混合比较。只有一个可用期间时仍执行点时规则，跨期规则和连续性规则返回 `insufficient_data`，最终回答按覆盖情况降级。Action Validator要求工具参数与解析结果逐项一致，阻止LLM Planner写入示例年份或猜测年份。
+风险期间由确定性解析器在Gate B前完成。一个用户目标期间扩展为截至该目标的全部同口径历史；未指定期间时优先采用截止日前全部可用年度，没有年度数据时选择数据最多的一组同口径中报或季报；多个明确期间保持原样。普通财务指标查询未指定期间或要求“最新”时，选择知识截止日前最新可用报告期；跨期变化未指定期间时，选择最近两个同口径期间。不同累计口径不会混合比较。只有一个可用期间时仍执行点时规则，跨期规则和连续性规则返回 `insufficient_data`，最终回答按覆盖情况降级。Action Validator要求工具参数与解析结果逐项一致，阻止LLM Planner写入示例年份或猜测年份。
 
 补充核验工具返回 `DATA_NOT_AVAILABLE` 时表示当前数据源未命中，应记录为证据缺口并继续或降级回答；如果已有财务证据，不得因为事件或公告补充查询为空而抹掉整个风险分析结果。
 
@@ -134,4 +141,4 @@ Evidence Ledger 将每个工具结果规范为带 `evidence_id` 的事实单元�
 
 Prompt 正文、版本和装配唯一以 `prompts/` 为准。全局策略与当前 Skill 组合为系统提示，运行时上下文独立注入；能力注册表、工具 Schema、数据截止日和预算由程序动态提供，禁止硬编码进 Prompt。
 
-每次模型调用记录 prompt ID/version、模型、温度、输入哈希、输出 schema 版本和延迟。每轮 Trace 记录解析结果、候选能力、动作历史、校验/修复、工具摘要、证据、缺口、终止原因和版本信息；不得记录或展示不可验证的私有推理链。
+每次模型调用记录 prompt ID/version、模型、温度、输入哈希、输出 schema 版本和延迟，包括回答完成后按条件触发的 `memory_summarizer`。每轮 Trace 记录解析结果、候选能力、动作历史、校验/修复、工具摘要、证据、缺口、终止原因和版本信息；不得记录或展示不可验证的私有推理链。

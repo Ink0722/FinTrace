@@ -2,7 +2,11 @@ from schemas.agent_state import AgentState
 from schemas.enums import ErrorType, ToolName, ToolStatus
 from schemas.tool_calls import ToolCall
 from schemas.tool_results import ToolError, ToolResult
+from harness.graph.nodes import review_evidence_node
 from harness.graph.workflow import run_agent
+from harness.memory.session_store import SessionStore
+from schemas.evidence import Evidence
+from schemas.request import AgentAction, ParsedRequest, ToolCallEntry
 
 
 def test_missing_company_clarifies_instead_of_guessing() -> None:
@@ -56,6 +60,13 @@ def test_pronoun_inherits_from_session_context() -> None:
     assert second.tool_call_history and second.tool_call_history[0].tool_name == "ownership_analysis"
 
 
+def test_persisted_session_keeps_user_and_assistant_messages() -> None:
+    run_agent("净利润是多少", session_id="TEST-MESSAGE-PAIR")
+    loaded = SessionStore().load("TEST-MESSAGE-PAIR")
+    roles = [item["role"] for item in loaded["recent_messages"]]
+    assert roles[-2:] == ["user", "assistant"]
+
+
 def test_state_supports_new_pipeline_fields() -> None:
     state = AgentState.model_validate(
         {
@@ -69,3 +80,72 @@ def test_state_supports_new_pipeline_fields() -> None:
     )
     assert state.routing_mode == "investigation"
     assert state.step_count == 2
+
+
+def test_company_only_overview_requires_two_evidence_sources(monkeypatch) -> None:
+    monkeypatch.setattr("harness.graph.nodes._run_skill_with_breaker", lambda *args, **kwargs: (None, None))
+    state = AgentState(
+        session_id="OVERVIEW",
+        user_request={"raw_query": "贵州茅台"},
+        parsed_request=ParsedRequest(raw_query="贵州茅台", entities=["600519.SH"], task_family="unknown"),
+        routing_mode="investigation",
+        current_action=AgentAction(action="call_tool", tool_name="event_timeline", operation="event_query"),
+        total_tool_calls=1,
+        tool_call_history=[ToolCallEntry(tool_name="event_timeline", operation="event_query", status="success")],
+        tool_results=[_evidence_result(ToolName.EVENT_TIMELINE, "EVENT-E1")],
+    )
+    review_evidence_node(state)
+    assert state.next_action == "plan"
+
+    state.current_action = AgentAction(action="call_tool", tool_name="research_analysis", operation="view_query")
+    state.total_tool_calls = 2
+    state.tool_call_history.append(
+        ToolCallEntry(tool_name="research_analysis", operation="view_query", status="success")
+    )
+    state.tool_results.append(_evidence_result(ToolName.RESEARCH_ANALYSIS, "RESEARCH-E1"))
+    review_evidence_node(state)
+    assert state.next_action == "answer"
+    assert state.termination_reason == "company_overview_coverage_reached"
+
+
+def test_company_overview_does_not_count_document_detail_as_second_aspect(monkeypatch) -> None:
+    monkeypatch.setattr("harness.graph.nodes._run_skill_with_breaker", lambda *args, **kwargs: (None, None))
+    state = AgentState(
+        session_id="OVERVIEW-DOCUMENT",
+        user_request={"raw_query": "东吴证券"},
+        parsed_request=ParsedRequest(raw_query="东吴证券", entities=["601555.SH"], task_family="unknown"),
+        routing_mode="investigation",
+        current_action=AgentAction(action="call_tool", tool_name="document_search", operation="search"),
+        total_tool_calls=2,
+        tool_call_history=[
+                ToolCallEntry(
+                    tool_name="event_timeline",
+                operation="event_query",
+                status="success",
+            ),
+                ToolCallEntry(
+                    tool_name="document_search",
+                operation="search",
+                status="success",
+            ),
+        ],
+        tool_results=[
+            _evidence_result(ToolName.EVENT_TIMELINE, "EVENT-E1"),
+            _evidence_result(ToolName.DOCUMENT_SEARCH, "DOCUMENT-E1"),
+        ],
+    )
+
+    review_evidence_node(state)
+
+    assert state.next_action == "plan"
+    assert state.termination_reason is None
+
+
+def _evidence_result(tool_name: ToolName, evidence_id: str) -> ToolResult:
+    return ToolResult(
+        tool_call_id=f"CALL-{evidence_id}",
+        tool_name=tool_name,
+        status=ToolStatus.SUCCESS,
+        data={"operation": "test"},
+        evidence=[Evidence(evidence_id=evidence_id, evidence_type="test", source={}, fact={"summary": "test evidence"})],
+    )

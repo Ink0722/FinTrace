@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.prompt_manifest
-version: 1.2.0
+version: 1.4.0
 language: zh-CN
 depends_on: []
 output_schema: null
@@ -29,18 +29,20 @@ System Prompt = `01_global_policy.md` + 当前 Skill Prompt。
 | evidence_reviewer | 04_evidence_reviewer.md | 是 | EvidenceReview |
 | action_repair | 05_action_repair.md | 是 | ActionRepairResult |
 | final_answer | 06_final_answer.md | 是 | FinalAnswer |
+| memory_summarizer | 07_memory_summarizer.md | 是 | MemoryUpdate |
 
-当前 `02` 至 `06` Skill 的 `depends_on` 均为 `fintrace.global_policy@1.x`。Capability 名称、implemented 状态、必填参数与参数上限仍由 Runtime Registry / Tool Schema 注入；Prompt 只维护决策与证据边界。
+当前 `02` 至 `07` Skill 的 `depends_on` 均为 `fintrace.global_policy@1.x`。Capability 名称、implemented 状态、必填参数与参数上限仍由 Runtime Registry / Tool Schema 注入；Prompt 只维护决策与证据边界。
 
 ## 运行时数据契约
 
 | skill | runtime_dependencies |
 | --- | --- |
-| request_parser | raw_query, recent_context, current_context, deterministic_entity_candidates, deterministic_time_candidates |
-| next_action_planner | ParsedRequest, CurrentContext, CandidateCapabilities, EvidenceLedger, EvidenceGaps, ToolCallHistory, RemainingBudget |
+| request_parser | raw_query, recent_context, conversation_summary, current_context, memory_hints, deterministic_entity_candidates, deterministic_time_candidates |
+| next_action_planner | ParsedRequest, CurrentContext, ConversationSummary, MemoryHints, CandidateCapabilities, EvidenceLedger, EvidenceGaps, ToolCallHistory, RemainingBudget |
 | evidence_reviewer | ParsedRequest, VerifiedClaims, EvidenceLedger, ToolCallHistory, AvailableCapabilities |
 | action_repair | FailedAction, ValidatorError, CapabilityDefinition, ToolSchema, ParsedRequest, RepairBudget |
-| final_answer | raw_query, ResolvedContext, AnswerStatus, VerifiedClaims, SupportingEvidence, Limitations |
+| final_answer | raw_query, ResolvedContext, AnswerStatus, VerifiedClaims, SupportingEvidence, Limitations, ClarificationQuestion |
+| memory_summarizer | PreviousSummary, MessagesToCompress, CurrentContext, VerifiedFindings |
 
 ## Trace 要求
 

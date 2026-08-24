@@ -22,7 +22,7 @@ FinTrace 是面向 A 股研究场景的证据驱动金融 Agent。系统将自�
 5. [harness/evidence/](harness/evidence/) 与 [harness/guards/validation.py](harness/guards/validation.py)：审查证据合并、充分性判断和工具结果校验。
 6. [tools/registry.py](tools/registry.py) 与五个工具的 `interface.py`：审查工具分发、参数校验和错误边界。
 7. [harness/skills.py](harness/skills.py)、[harness/prompts.py](harness/prompts.py) 和 [prompts/](prompts/)：审查 LLM Skill、结构化输出与 Prompt 版本。
-8. [harness/tracing/store.py](harness/tracing/store.py) 与 [harness/memory/session_store.py](harness/memory/session_store.py)：审查日志和多轮记忆持久化。
+8. [harness/tracing/store.py](harness/tracing/store.py)、[harness/memory/session_store.py](harness/memory/session_store.py) 与 [harness/memory/manager.py](harness/memory/manager.py)：审查日志、会话持久化、滚动摘要和证据事实记忆。
 9. [tests/](tests/)：从测试反查各模块的预期行为和边界条件。
 
 更完整的设计说明见 [docs/README.md](docs/README.md)。源码与测试代表当前真实实现；`docs/` 描述设计目标和验收口径，二者不一致时应以源码、测试和实际索引为准。
@@ -35,7 +35,7 @@ CLI、FastAPI 和前端最终都进入同一个 `run_agent()` / `stream_agent()`
 用户请求
   -> load_session                 恢复多轮会话上下文
   -> resolve_request              解析实体、时间、任务和筛选条件
-  -> check_pre_answerability      判断可路由、需澄清或超出能力边界
+  -> check_pre_answerability      判断完整可路由、带缺口可路由、需澄清或超出能力边界
   -> route_mode
        -> direct                  简单请求生成确定性单工具动作
        -> investigation           LLM Planner 或规则队列逐步规划
@@ -82,7 +82,9 @@ FinTrace/
 │  │  ├─ ledger.py              证据去重与合并
 │  │  └─ review.py              确定性优先的证据充分性判断
 │  ├─ guards/validation.py      工具返回值校验与失败分类
-│  ├─ memory/session_store.py   SQLite 多轮上下文
+│  ├─ memory/
+│  │  ├─ session_store.py       SQLite 多轮上下文持久化
+│  │  └─ manager.py             消息窗口、滚动摘要和证据事实筛选
 │  ├─ tracing/
 │  │  ├─ store.py               运行日志及工具/证据/节点/LLM 子记录
 │  │  ├─ users.py               本地用户与会话归属
@@ -102,6 +104,7 @@ FinTrace/
 │  ├─ tool_calls.py             统一工具输入
 │  ├─ tool_results.py           统一工具输出和错误
 │  ├─ evidence.py               证据结构
+│  ├─ memory.py                 摘要输出与已验证事实结构
 │  └─ financial/document/ownership/event.py 领域模型
 │
 ├─ tools/                       在线只读工具
@@ -130,7 +133,8 @@ FinTrace/
 │  ├─ 03_next_action_planner.md 单动作规划
 │  ├─ 04_evidence_reviewer.md   证据审查
 │  ├─ 05_action_repair.md       动作修复
-│  └─ 06_final_answer.md        最终回答
+│  ├─ 06_final_answer.md        最终回答
+│  └─ 07_memory_summarizer.md   滚动会话摘要
 │
 ├─ data/                        本地数据、标准化产物和冻结索引（默认不入 Git）
 ├─ runtime/                     统一可变运行库 `fintrace.sqlite3`
@@ -193,7 +197,7 @@ QWEN_API_KEY=
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_MODEL=
 
-# 请求解析、规划、审查和修复模型；可与主模型相同
+# 请求解析、规划、审查、修复和记忆摘要模型；可与主模型相同
 QWEN_PLANNER_API_KEY=
 QWEN_PLANNER_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_PLANNER_MODEL=
@@ -331,10 +335,10 @@ F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index finaliz
 运行完整测试：
 
 ```powershell
-F:\conda_envs\FinTrace\python.exe -m pytest -q --basetemp=.tmp_tests
+F:\conda_envs\FinTrace\python.exe -m pytest -q --basetemp runtime\pytest-run
 ```
 
-当前基线：`225 passed`。
+当前基线：`239 passed`。
 
 测试文件按职责划分：
 
@@ -343,6 +347,7 @@ F:\conda_envs\FinTrace\python.exe -m pytest -q --basetemp=.tmp_tests
 - `test_workflow.py`、`test_streaming_workflow.py`：完整 Agent 与 SSE；
 - `test_*_analysis.py`、`test_document_search.py`、`test_event_timeline.py`：工具行为；
 - `test_local_users.py`、`test_evaluation_log.py`：用户、会话和可观测性；
+- `test_memory_manager.py`：近期消息、滚动摘要、证据事实和相关记忆筛选；
 - `test_evaluation_runner.py`：评测批次执行；
 - `test_*_migration.py`：历史数据迁移。
 

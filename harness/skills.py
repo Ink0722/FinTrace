@@ -32,6 +32,7 @@ def run_skill(
         FinalAnswer,
         ParsedRequest,
     )
+    from schemas.memory import MemoryUpdate
 
     output_models: dict[str, type[BaseModel]] = {
         "request_parser": ParsedRequest,
@@ -39,6 +40,7 @@ def run_skill(
         "evidence_reviewer": EvidenceReview,
         "action_repair": ActionRepairResult,
         "final_answer": FinalAnswer,
+        "memory_summarizer": MemoryUpdate,
     }
     model_class = output_models.get(skill)
     if model_class is None:
@@ -107,7 +109,9 @@ def _retry_hint(error: str) -> str:
     )
 
 
-PLANNER_SKILLS = {"request_parser", "next_action_planner", "evidence_reviewer", "action_repair"}
+PLANNER_SKILLS = {
+    "request_parser", "next_action_planner", "evidence_reviewer", "action_repair", "memory_summarizer"
+}
 
 
 def client_for_skill(skill: str) -> QwenClient:

@@ -20,6 +20,8 @@ SINCE_PATTERN = re.compile(r"(20\d{2})\s*年(?:以来|之后|后)")
 MONTH_END = re.compile(r"(20\d{2})\s*年\s*(\d{1,2})\s*月(?:末|底)?")
 
 RELATIVE_LATEST = ("最新", "当前", "现在", "目前", "最近")
+RELATIVE_TODAY = ("今天", "今日", "当天")
+RELATIVE_RECENT = ("近期", "近来", "最近")
 RELATIVE_LAST_YEAR = ("去年", "上一年", "上年")
 
 
@@ -29,6 +31,7 @@ class TimeResolution:
     as_of_dates: list[str] = field(default_factory=list)  # ownership observation points
     start_date: str | None = None
     end_date: str | None = None
+    mode: str = "unspecified"
     unresolved: list[str] = field(default_factory=list)  # relative expressions we could not normalize
 
 
@@ -66,14 +69,31 @@ def resolve_time(query: str, knowledge_cutoff: str | None = None) -> TimeResolut
     result.periods = sorted(seen_periods)
     result.as_of_dates = sorted(set(result.as_of_dates))
 
-    if any(marker in query for marker in RELATIVE_LATEST):
-        result.unresolved.append("latest")
+    has_explicit_time = bool(result.periods or result.as_of_dates or result.start_date or result.end_date)
+    if has_explicit_time:
+        result.mode = "explicit"
+    if not has_explicit_time and any(marker in query for marker in RELATIVE_TODAY):
+        result.mode = "today"
+        if knowledge_cutoff:
+            result.start_date = knowledge_cutoff
+            result.end_date = knowledge_cutoff
+        else:
+            result.unresolved.append("today")
+    elif not has_explicit_time and any(marker in query for marker in RELATIVE_RECENT):
+        result.mode = "recent"
+        if knowledge_cutoff:
+            result.end_date = knowledge_cutoff
+    elif not has_explicit_time and any(marker in query for marker in RELATIVE_LATEST):
+        result.mode = "latest"
+        if knowledge_cutoff:
+            result.end_date = knowledge_cutoff
     if any(marker in query for marker in RELATIVE_LAST_YEAR):
         resolved = _last_year(knowledge_cutoff)
         if resolved:
             if resolved not in result.periods:
                 result.periods.append(resolved)
             result.periods.sort()
+            result.mode = "explicit"
         else:
             result.unresolved.append("last_year")
     return result

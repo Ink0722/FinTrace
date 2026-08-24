@@ -47,11 +47,12 @@ class ParsedRequest(BaseModel):
     period_type: str | None = None
     period_resolution_mode: Literal[
         "not_required", "explicit", "history_until_target", "all_available_fy",
-        "all_available_comparable", "data_unavailable"
+        "all_available_comparable", "latest_available", "latest_two_comparable", "data_unavailable"
     ] = "not_required"
     as_of_dates: list[str] = Field(default_factory=list)  # ownership observation points
     start_date: str | None = None
     end_date: str | None = None
+    time_mode: Literal["unspecified", "explicit", "today", "latest", "recent"] = "unspecified"
     task_family: TaskFamily = "unknown"
     metrics: list[str] = Field(default_factory=list)
     focus_topics: list[str] = Field(default_factory=list)
@@ -64,6 +65,7 @@ class ParsedRequest(BaseModel):
     requires_investigation: bool = False
     requires_realtime: bool = False
     requires_prediction: bool = False
+    capability_gaps: list[str] = Field(default_factory=list)
     unresolved_references: list[str] = Field(default_factory=list)
     missing_slots: list[str] = Field(default_factory=list)
     parsed_by: Literal["rule", "llm"] = "rule"
@@ -126,7 +128,7 @@ class FinalAnswer(BaseModel):
 
 
 class PreAnswerability(BaseModel):
-    status: Literal["routeable", "clarification_required", "unsupported"]
+    status: Literal["routeable", "routeable_with_gaps", "clarification_required", "unsupported"]
     capability: str | None = None
     reason: str = ""
     missing_slots: list[str] = Field(default_factory=list)

@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.next_action_planner
-version: 1.5.0
+version: 1.7.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -22,6 +22,8 @@ output_schema: AgentAction
 - `raw_query`
 - `parsed_request`
 - `resolved_context`
+- `conversation_summary`
+- `memory_hints`
 - `candidate_capabilities`
 - `current_evidence`
 - `verified_claims`
@@ -42,8 +44,11 @@ output_schema: AgentAction
 6. 如果当前 Evidence 已足以回答用户核心问题，返回 `finish`。
 7. 如果 Runtime 提供的 Capability 无法处理当前需求，返回 `unsupported`。
 8. 如果仍缺少必须由用户提供、且无法从 Context 中唯一恢复的参数，返回 `clarify`。但在返回 `clarify` 之前，必须先确认已不存在任何不需要该缺失参数的有效调查动作（如文档检索、事件查询）；只要还有此类动作，就优先继续调查，并在最终回答中披露缺失的限制。
+   - `task_family=unknown`但已解析出唯一公司时，不得立即 `clarify`。优先使用低成本结构化能力形成资料概览；通常依次考虑事件、研报观点和主要股东快照，已有两个有证据的方面后即可结束。
+   - 请求同时包含 `capability_gaps`时，先完成可支持部分；不得因为行情、投资建议或个人账户操作不可用而拒绝财务、事件、研报或股权调查。
 9. 必须遵守 `remaining_budget`。预算接近上限时，宁可带 Limitations 结束，也不要进行低价值、猜测性的额外调用。
 10. 如果选择 document search，应明确本次检索需要解决的具体事实问题；Query 的措辞可后续交给专门的 Query Rewriter 优化。
+11. `conversation_summary` 和 `memory_hints` 只能帮助恢复上下文和选择核验工具。它们不是本轮 Evidence；涉及财务数值、股权关系、事件或研报观点时，必须通过当前工具调用重新取得证据。
 
 【专项 Operation 规则】
 
@@ -73,7 +78,15 @@ output_schema: AgentAction
 - 研报观点只证明机构曾作出该表述，不得替代财务、公告、股权等一手事实工具。
 - 通常先取得事件节点，再决定是否聚类；不得仅因事件日期接近就规划因果分析。
 
-5. 通用参数安全
+5. 工具职责边界
+- 精确财务值和同口径比较使用 `financial_analysis`；风险规则扫描使用 `risk_scan`。
+- 股东快照、持股变化和有限持股路径使用 `ownership_analysis`。
+- 结构化事件筛选、排序和聚类使用 `event_timeline`。
+- 机构观点、评级、盈利预测和研报风险提示使用 `research_analysis`。
+- 公告或研报原文细节使用 `document_search`，不得用宽泛文档检索替代可确定计算的结构化工具。
+- “最新研报”不得路由到财务指标工具，“最新公告”不得用财务数据代替。
+
+6. 通用参数安全
 - Planner 不得生成或修改 `knowledge_cutoff`，该参数由 Workflow 注入。
 - 不得把其他 operation 的专属参数混入当前调用，例如为 `event_query` 传入 `window_days`。
 - `event_types` 必须来自运行时能力声明；监管处罚、监管措施、警示函、立案和纪律处分使用 `regulatory_penalty`，风险警示和退市风险警示使用 `risk_warning`。

@@ -10,6 +10,7 @@ from schemas.agent_state import CurrentContext, Message
 from harness.runtime_db import connect_runtime, runtime_path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+MAX_STORED_MESSAGES = 12
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -85,7 +86,7 @@ class SessionStore:
             json.dumps(current_context.model_dump(), ensure_ascii=False),
             conversation_summary,
             json.dumps(verified_findings, ensure_ascii=False),
-            json.dumps([message.model_dump() for message in recent_messages[-8:]], ensure_ascii=False),
+            json.dumps([message.model_dump() for message in recent_messages[-MAX_STORED_MESSAGES:]], ensure_ascii=False),
             turn_count,
             datetime.now(UTC).isoformat(),
         )

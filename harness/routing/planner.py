@@ -33,7 +33,16 @@ def _action_queue(parsed: ParsedRequest) -> list[AgentAction]:
     family = parsed.task_family
     entities = parsed.entities
 
-    if family in {"financial_investigation", "financial_metric_query", "financial_metric_compare", "unknown"}:
+    if family == "unknown":
+        if entities:
+            queue.append(_event_action(parsed))
+            queue.append(_research_action(parsed))
+            queue.append(_holding_query_action(parsed))
+        elif parsed.people:
+            queue.append(_holder_reverse_action(parsed))
+        else:
+            queue.append(_document_action(parsed))
+    elif family in {"financial_investigation", "financial_metric_query", "financial_metric_compare"}:
         if family == "financial_investigation" and len(entities) == 1 and parsed.periods:
             queue.append(_risk_scan_action(parsed))
         if entities and parsed.metrics and parsed.periods:
@@ -242,6 +251,10 @@ def _document_action(
     arguments: dict = {"query": parsed.raw_query, "top_k": DEFAULT_TOP_K}
     if parsed.entities:
         arguments["company_ids"] = parsed.entities
+    if parsed.start_date:
+        arguments["start_date"] = parsed.start_date
+    if parsed.end_date:
+        arguments["end_date"] = parsed.end_date
     if force_research:
         arguments["document_types"] = ["research_report"]
     elif force_announcement:
@@ -267,6 +280,10 @@ def _event_action(parsed: ParsedRequest) -> AgentAction:
     }
     if parsed.event_types:
         arguments["event_types"] = parsed.event_types
+    if parsed.start_date:
+        arguments["start_date"] = parsed.start_date
+    if parsed.end_date:
+        arguments["end_date"] = parsed.end_date
     return AgentAction(
         action="call_tool",
         capability="event_query",

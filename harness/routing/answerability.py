@@ -22,7 +22,7 @@ SLOT_QUESTIONS = {
 
 
 def check_answerability(parsed: ParsedRequest) -> PreAnswerability:
-    if parsed.requires_realtime or parsed.task_family in UNSUPPORTED_FAMILIES:
+    if parsed.task_family in UNSUPPORTED_FAMILIES:
         return PreAnswerability(
             status="unsupported",
             capability=parsed.task_family,
@@ -46,12 +46,35 @@ def check_answerability(parsed: ParsedRequest) -> PreAnswerability:
         # Investigation fills slots adaptively; the planner can still clarify mid-loop if stuck.
         if not parsed.entities and not parsed.people and parsed.unresolved_references:
             return _clarify(parsed, ["company_ids"])
-        return PreAnswerability(status="routeable", capability=parsed.task_family, reason="复杂调查任务，进入有界调查循环。")
+        status = "routeable_with_gaps" if parsed.capability_gaps else "routeable"
+        return PreAnswerability(status=status, capability=parsed.task_family, reason="复杂调查任务，进入有界调查循环。")
 
     missing = _missing_slots(parsed)
     if missing:
+        if _can_investigate_with_gaps(parsed):
+            return PreAnswerability(
+                status="routeable_with_gaps",
+                capability=parsed.task_family,
+                reason=f"部分参数缺失但仍有可执行调查动作：{missing}",
+                missing_slots=missing,
+                clarification_question=" ".join(SLOT_QUESTIONS.get(slot, f"缺少必要条件：{slot}") for slot in missing),
+            )
         return _clarify(parsed, missing)
+    if parsed.capability_gaps:
+        return PreAnswerability(
+            status="routeable_with_gaps",
+            capability=parsed.task_family,
+            reason="请求包含当前能力无法覆盖的部分，先回答可支持部分。",
+        )
     return PreAnswerability(status="routeable", capability=parsed.task_family, reason="能力存在且必要参数完整。")
+
+
+def _can_investigate_with_gaps(parsed: ParsedRequest) -> bool:
+    if parsed.entities or parsed.people:
+        return True
+    if parsed.task_family in {"document_retrieval", "general_financial_explanation", "unknown"}:
+        return bool(parsed.raw_query.strip())
+    return False
 
 
 def _missing_slots(parsed: ParsedRequest) -> list[str]:

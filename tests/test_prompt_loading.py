@@ -7,6 +7,7 @@ from harness.prompts import (
 )
 from harness.skills import run_skill
 from schemas.request import ParsedRequest
+from schemas.memory import MemoryUpdate
 
 
 def test_global_policy_has_valid_header() -> None:
@@ -93,4 +94,23 @@ def test_run_skill_validates_output_schema() -> None:
     )
     assert isinstance(output, ParsedRequest)
     assert output.task_family == "financial_investigation"
+    assert record.status == "success"
+
+
+def test_memory_summarizer_prompt_and_schema_are_active() -> None:
+    prompt = load_prompt("07_memory_summarizer.md")
+    assert prompt.prompt_id == "fintrace.memory_summarizer"
+
+    from harness.llm import QwenClient
+
+    class FakeClient(QwenClient):
+        def __init__(self):
+            super().__init__(api_key="test-key")
+
+        def chat_json(self, messages, temperature=0.0):
+            return {"choices": [{"message": {"content": '{"summary":"摘要","open_questions":[]}'}}]}
+
+    output, record = run_skill("memory_summarizer", {"messages_to_compress": []}, client=FakeClient())
+    assert isinstance(output, MemoryUpdate)
+    assert output.summary == "摘要"
     assert record.status == "success"

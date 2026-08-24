@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+// The backend emits SSE heartbeats while tools or the LLM are still working.
+// Keep the proxy ceiling above normal long-running investigation turns.
+export const maxDuration = 900;
 
 export async function POST(request: NextRequest) {
   const backend = process.env.FINTRACE_API_BASE_URL ?? "http://127.0.0.1:8000";

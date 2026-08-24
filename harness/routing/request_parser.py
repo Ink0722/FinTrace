@@ -37,6 +37,7 @@ INVESTIGATION_MARKERS = ("分析", "调查", "排查", "诊断", "综合", "尽�
 COMPARE_MARKERS = ("变化", "比较", "对比", "同比增长", "同比下降", "趋势", "涨了", "跌了", "增长多少", "下降多少", "变动")
 REALTIME_MARKERS = ("股价", "市值", "行情", "涨跌幅", "K线", "盘口", "实时", "今日净值", "现价")
 PREDICTION_MARKERS = ("会涨", "会跌", "能涨", "目标价是多少", "值不值得买", "买入建议", "预测未来", "明年会")
+USER_ACCOUNT_MARKERS = ("银行卡", "账户权限", "交易权限", "开户", "销户", "修改密码", "持仓账户")
 RESEARCH_MARKERS = ("机构", "券商", "分析师", "研报", "评级", "目标价", "盈利预测", "风险提示")
 RESEARCH_DETAIL_MARKERS = ("原文", "出处", "依据", "理由", "为什么", "详细", "具体怎么说")
 FINANCIAL_RISK_MARKERS = ("金融风险", "财务风险", "风险评估", "风险分析", "财务排雷", "风险扫描")
@@ -75,6 +76,7 @@ def parse_request(
         as_of_dates=time.as_of_dates,
         start_date=time.start_date,
         end_date=time.end_date,
+        time_mode=time.mode,
         metrics=_infer_metrics(query),
         focus_topics=extract_focus_topics(query),
         document_types=extract_document_types(query),
@@ -92,6 +94,13 @@ def parse_request(
         parsed.unresolved_references.extend(time.unresolved)
 
     parsed.task_family = _infer_task_family(parsed, query)
+    if parsed.task_family == "user_account_query":
+        # Account terms such as “银行卡” may contain company-name substrings.
+        # They are irrelevant to this task and must not pollute financial context.
+        parsed.entities = []
+        parsed.entity_candidates = []
+        parsed.people = []
+    parsed.capability_gaps = _infer_capability_gaps(parsed)
     parsed.comparison_type = _infer_comparison(parsed, query)
     parsed.requires_investigation = parsed.requires_explanation or any(
         marker in query for marker in INVESTIGATION_MARKERS
@@ -121,23 +130,25 @@ def parse_request(
 
 
 def _infer_task_family(parsed: ParsedRequest, query: str) -> str:
-    if parsed.requires_realtime:
-        return "realtime_market_query"
+    has_user_account = any(marker in query for marker in USER_ACCOUNT_MARKERS)
     has_research = any(marker in query for marker in RESEARCH_MARKERS)
+    has_ownership = any(word in query for word in ("股东", "持股", "十大", "实控人", "减持", "增持", "质押"))
+    has_document = any(word in query for word in ("公告", "问询函", "年报", "研报", "原文", "披露", "检索", "查找", "找出"))
+    has_event = any(word in query for word in ("事件", "时间线", "处罚", "立案", "违规记录", "警示函", "经过"))
+    has_metric = bool(parsed.metrics)
+    has_financial_risk = any(marker in query for marker in FINANCIAL_RISK_MARKERS)
+    has_supported_domain = has_research or has_ownership or has_document or has_event or has_metric or has_financial_risk
+
+    if has_user_account and not has_supported_domain:
+        return "user_account_query"
     if has_research and any(marker in query for marker in RESEARCH_DETAIL_MARKERS):
         if any(marker in query for marker in ("找", "查找", "检索")) and "观点" not in query:
             return "document_retrieval"
         return "research_investigation"
     if has_research:
         return "research_view_query"
-    if parsed.requires_prediction:
-        return "prediction_request"
-
-    has_ownership = any(word in query for word in ("股东", "持股", "十大", "实控人", "减持", "增持", "质押"))
-    has_document = any(word in query for word in ("公告", "问询函", "年报", "研报", "原文", "披露", "检索", "查找", "找出"))
-    has_event = any(word in query for word in ("事件", "时间线", "处罚", "立案", "违规记录", "警示函", "经过"))
-    has_metric = bool(parsed.metrics)
-    has_financial_risk = any(marker in query for marker in FINANCIAL_RISK_MARKERS)
+    if parsed.requires_prediction and parsed.entities:
+        return "financial_investigation"
 
     if "穿透" in query:
         return "ownership_penetration"
@@ -161,7 +172,22 @@ def _infer_task_family(parsed: ParsedRequest, query: str) -> str:
         return "financial_investigation"
     if has_document:
         return "document_retrieval"
+    if parsed.requires_realtime:
+        return "realtime_market_query"
+    if parsed.requires_prediction:
+        return "prediction_request"
     return "unknown"
+
+
+def _infer_capability_gaps(parsed: ParsedRequest) -> list[str]:
+    gaps: list[str] = []
+    if parsed.requires_realtime and parsed.task_family != "realtime_market_query":
+        gaps.append("realtime_market_data_unavailable")
+    if parsed.requires_prediction and parsed.task_family != "prediction_request":
+        gaps.append("deterministic_investment_recommendation_unavailable")
+    if any(marker in parsed.raw_query for marker in USER_ACCOUNT_MARKERS) and parsed.task_family != "user_account_query":
+        gaps.append("user_account_operation_unavailable")
+    return gaps
 
 
 def _infer_comparison(parsed: ParsedRequest, query: str) -> str:
@@ -209,6 +235,7 @@ def _merge_llm_result(parsed: ParsedRequest, llm_parsed: ParsedRequest, resolver
     parsed.requires_investigation = parsed.requires_investigation or llm_parsed.requires_investigation
     parsed.requires_realtime = parsed.requires_realtime or llm_parsed.requires_realtime
     parsed.requires_prediction = parsed.requires_prediction or llm_parsed.requires_prediction
+    parsed.capability_gaps = list(dict.fromkeys(parsed.capability_gaps + llm_parsed.capability_gaps))
     parsed.comparison_type = llm_parsed.comparison_type if parsed.comparison_type == "none" else parsed.comparison_type
     parsed.unresolved_references = list(
         dict.fromkeys(parsed.unresolved_references + llm_parsed.unresolved_references)

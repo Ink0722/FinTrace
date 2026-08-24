@@ -22,6 +22,18 @@ TOOL_LABELS = {
     "document_search": "文档检索", "event_timeline": "事件时间线",
     "research_analysis": "研报观点",
 }
+TIME_MODE_LABELS = {
+    "unspecified": "未指定",
+    "explicit": "明确日期或报告期",
+    "today": "今天（按知识截止日）",
+    "latest": "截止日前最新可用",
+    "recent": "截止日前近期范围",
+}
+CAPABILITY_GAP_LABELS = {
+    "realtime_market_data_unavailable": "缺少实时或历史行情数据",
+    "deterministic_investment_recommendation_unavailable": "不提供确定性投资建议或涨跌预测",
+    "user_account_operation_unavailable": "不连接个人账户或办理账户操作",
+}
 NODE_LABELS = {
     "load_session": "会话加载", "resolve_request": "请求解析",
     "check_pre_answerability": "可回答性判断", "build_clarification": "澄清追问",
@@ -87,6 +99,7 @@ def print_request_summary(state: dict) -> None:
     print(LINE)
     _field("主体", _join(parsed.get("entities") or context.get("company_ids")) or "未识别")
     _field("任务", TASK_LABELS.get(parsed.get("task_family"), parsed.get("task_family") or "未识别"))
+    _field("时间语义", TIME_MODE_LABELS.get(parsed.get("time_mode"), parsed.get("time_mode") or "未指定"))
     requested_periods = parsed.get("requested_periods") or []
     _field("用户目标期间", _join(requested_periods) or "未指定")
     _field("实际计算期间", _join(parsed.get("periods")) or "未解析")
@@ -100,6 +113,8 @@ def print_request_summary(state: dict) -> None:
     _field("信息截止日", state.get("knowledge_cutoff") or "未设置")
     if parsed.get("missing_slots"):
         _field("缺少条件", _join(parsed["missing_slots"]))
+    if parsed.get("capability_gaps"):
+        _field("能力缺口", _join([CAPABILITY_GAP_LABELS.get(item, item) for item in parsed["capability_gaps"]]))
 
 
 def print_route_summary(state: dict) -> None:
@@ -427,6 +442,8 @@ def _period_resolution_label(mode: str | None) -> str:
         "history_until_target": "采用截至目标期间的全部同口径历史",
         "all_available_fy": "采用截止日前全部可用年度",
         "all_available_comparable": "无年度数据，采用数据最多的同口径期间",
+        "latest_available": "采用截止日前最新可用报告期",
+        "latest_two_comparable": "采用最近两个同口径报告期",
         "data_unavailable": "财务期间索引不可用",
     }.get(mode or "", mode or "未说明")
 

@@ -45,6 +45,7 @@ class AgentState(BaseModel):
     retry_count: int = 0
     conversation_summary: str = ""
     previous_findings: list[dict[str, Any]] = Field(default_factory=list)
+    relevant_memories: list[dict[str, Any]] = Field(default_factory=list)
     final_answer: str | None = None
     workflow_status: str = "running"
     next_action: str | None = None

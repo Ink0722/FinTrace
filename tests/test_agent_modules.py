@@ -125,9 +125,20 @@ def test_resolve_time_periods_and_relative() -> None:
     time = resolve_time("2024年一季度和2024年半年报")
     assert time.periods == ["2024-03-31", "2024-06-30"]
     assert resolve_time("2023年").periods == ["2023-12-31"]
-    assert resolve_time("最新数据").unresolved == ["latest"]
+    latest = resolve_time("最新数据", knowledge_cutoff="2026-05-28")
+    assert latest.mode == "latest"
+    assert latest.end_date == "2026-05-28"
+    assert latest.periods == []
+    today = resolve_time("今天的数据", knowledge_cutoff="2026-05-28")
+    assert today.mode == "today"
+    assert today.start_date == today.end_date == "2026-05-28"
+    explicit = resolve_time("今天查询2024年年报", knowledge_cutoff="2026-05-28")
+    assert explicit.mode == "explicit"
+    assert explicit.periods == ["2024-12-31"]
     assert resolve_time("去年的业绩").unresolved == ["last_year"]
-    assert resolve_time("去年的业绩", knowledge_cutoff="2025-06-30").periods == ["2024-12-31"]
+    last_year = resolve_time("去年的业绩", knowledge_cutoff="2025-06-30")
+    assert last_year.periods == ["2024-12-31"]
+    assert last_year.mode == "explicit"
     assert resolve_time("2022年以来的处罚").start_date == "2022-01-01"
 
 

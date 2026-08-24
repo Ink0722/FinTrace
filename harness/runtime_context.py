@@ -8,6 +8,11 @@ from harness.routing.capability_registry import get_capability
 
 MAX_EVIDENCE_ITEMS = 12
 MAX_CHUNK_TEXT_CHARS = 500
+CAPABILITY_GAP_MESSAGES = {
+    "realtime_market_data_unavailable": "当前数据不包含实时或历史行情，无法评价股价表现。",
+    "deterministic_investment_recommendation_unavailable": "系统不提供确定性的买入、卖出或涨跌预测结论。",
+    "user_account_operation_unavailable": "系统不连接个人账户，无法办理开户、权限或账户资料操作。",
+}
 
 
 def evidence_summary(state: AgentState, limit: int = MAX_EVIDENCE_ITEMS) -> list[dict]:
@@ -51,6 +56,8 @@ def planner_runtime(state: AgentState) -> dict:
         "raw_query": state.user_request.raw_query,
         "parsed_request": state.parsed_request.model_dump() if state.parsed_request else None,
         "resolved_context": state.current_context.model_dump(),
+        "conversation_summary": state.conversation_summary,
+        "memory_hints": state.relevant_memories,
         "candidate_capabilities": capability_descriptors(state.candidate_capabilities),
         "current_evidence": evidence_summary(state),
         "verified_claims": [],
@@ -90,11 +97,21 @@ def repair_runtime(state: AgentState, errors: list[str]) -> dict:
 
 def final_answer_runtime(state: AgentState) -> dict:
     gaps = [gap.description for gap in state.evidence_gaps]
+    capability_gaps = [
+        CAPABILITY_GAP_MESSAGES.get(gap, gap)
+        for gap in (state.parsed_request.capability_gaps if state.parsed_request else [])
+    ]
+    clarification = (
+        state.pre_answerability.clarification_question
+        if state.pre_answerability and state.pre_answerability.status == "routeable_with_gaps"
+        else None
+    )
     return {
         "raw_query": state.user_request.raw_query,
         "resolved_context": state.current_context.model_dump(),
         "answer_status": state.answer_status,
         "verified_claims": [],
         "supporting_evidence": evidence_summary(state),
-        "limitations": list(dict.fromkeys([*gaps, *state.warnings]))[:10],
+        "limitations": list(dict.fromkeys([*capability_gaps, *gaps, *state.warnings]))[:10],
+        "clarification_question": clarification,
     }

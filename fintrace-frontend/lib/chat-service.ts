@@ -78,8 +78,6 @@ const TOOL_LABELS: Record<string, string> = {
 
 export const chatService = {
   async sendMessage(request: ChatRequest, hooks: ChatHooks) {
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 300_000);
     let response: Response;
     try {
       response = await fetch("/api/fintrace/chat/stream", {
@@ -90,17 +88,12 @@ export const chatService = {
           session_id: request.sessionId,
           user_id: request.userId,
         }),
-        signal: controller.signal,
       });
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        throw new Error("Agent 请求超过 5 分钟，请检查后端模型或工具状态。", { cause: error });
-      }
       throw new Error("无法连接 FinTrace 后端，请确认 FastAPI 已在 8000 端口启动。", { cause: error });
     }
     if (!response.ok || !response.body) {
       const payload = await readPayload(response);
-      window.clearTimeout(timeout);
       throw new Error(errorMessage(payload, response.status));
     }
 
@@ -109,11 +102,12 @@ export const chatService = {
     const trace: TraceStep[] = [];
     let content = "";
     let finalState: BackendState | undefined;
-    try {
-      await consumeSse(response.body, (event, payload) => {
+    await consumeSse(response.body, (event, payload) => {
         if (event === "request.resolved") {
           const parsed = payload as Record<string, unknown>;
-          trace.push({ id: "request", label: "请求解析", detail: `主体 ${displayGeneric(parsed.entities)}；任务 ${String(parsed.task_family ?? "未识别")}；期间 ${displayGeneric(parsed.periods)}`, status: "completed" });
+          const gaps = Array.isArray(parsed.capability_gaps) && parsed.capability_gaps.length > 0
+            ? `；能力缺口 ${displayGeneric(parsed.capability_gaps)}` : "";
+          trace.push({ id: "request", label: "请求解析", detail: `主体 ${displayGeneric(parsed.entities)}；任务 ${String(parsed.task_family ?? "未识别")}；时间语义 ${String(parsed.time_mode ?? "未指定")}；期间 ${displayGeneric(parsed.periods)}${gaps}`, status: "completed" });
           hooks.onTrace([...trace]);
         } else if (event === "route.selected") {
           const route = payload as Record<string, unknown>;
@@ -162,10 +156,7 @@ export const chatService = {
         } else if (event === "workflow.failed") {
           throw new Error(String((payload as { message?: string }).message ?? "Agent 流式执行失败。"));
         }
-      });
-    } finally {
-      window.clearTimeout(timeout);
-    }
+    });
     return { content, tools, evidence, state: finalState };
   },
 };

@@ -69,6 +69,7 @@ def test_planner_client_uses_independent_env_names(monkeypatch) -> None:
     assert client.model == "planner-model"
     assert client_for_skill("next_action_planner").model == "planner-model"
     assert client_for_skill("evidence_reviewer").model == "planner-model"
+    assert client_for_skill("memory_summarizer").model == "planner-model"
     assert client_for_skill("final_answer").model == "main-model"
 
 
