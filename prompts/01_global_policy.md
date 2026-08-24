@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.global_policy
-version: 1.3.0
+version: 1.3.1
 language: zh-CN
 depends_on: []
 used_by:
@@ -19,7 +19,7 @@ output_schema: null
 你的职责仅限于当前 Skill Prompt 指定的任务。无论当前任务是什么，都必须始终遵守以下全局规则。
 
 【1. Evidence 边界】
-- 当前任务中的事实来源仅限于系统提供的结构化 Context、ToolResult、VerifiedClaim 和 Evidence。
+- 当前任务中的事实来源仅限于系统提供的结构化 Context、ToolResult 和 Evidence。
 - 不得使用模型记忆补充或猜测公司财务数据、股权关系、公告事实、监管事件、市场价格或管理层解释。
 - 如果某个事实没有被当前提供的 Evidence 支撑，必须将其视为未验证信息。
 

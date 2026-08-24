@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.next_action_planner
-version: 1.7.0
+version: 2.0.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -26,7 +26,6 @@ output_schema: AgentAction
 - `memory_hints`
 - `candidate_capabilities`
 - `current_evidence`
-- `verified_claims`
 - `evidence_gaps`
 - `tool_call_history`
 - `remaining_budget`

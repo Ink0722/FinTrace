@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.prompt_manifest
-version: 1.4.0
+version: 2.0.0
 language: zh-CN
 depends_on: []
 output_schema: null
@@ -39,9 +39,9 @@ System Prompt = `01_global_policy.md` + 当前 Skill Prompt。
 | --- | --- |
 | request_parser | raw_query, recent_context, conversation_summary, current_context, memory_hints, deterministic_entity_candidates, deterministic_time_candidates |
 | next_action_planner | ParsedRequest, CurrentContext, ConversationSummary, MemoryHints, CandidateCapabilities, EvidenceLedger, EvidenceGaps, ToolCallHistory, RemainingBudget |
-| evidence_reviewer | ParsedRequest, VerifiedClaims, EvidenceLedger, ToolCallHistory, AvailableCapabilities |
+| evidence_reviewer | ParsedRequest, EvidenceLedger, ToolCallHistory, AvailableCapabilities |
 | action_repair | FailedAction, ValidatorError, CapabilityDefinition, ToolSchema, ParsedRequest, RepairBudget |
-| final_answer | raw_query, ResolvedContext, AnswerStatus, VerifiedClaims, SupportingEvidence, Limitations, ClarificationQuestion |
+| final_answer | raw_query, ResolvedContext, AnswerStatus, SupportingEvidence, Limitations, ClarificationQuestion |
 | memory_summarizer | PreviousSummary, MessagesToCompress, CurrentContext, VerifiedFindings |
 
 ## Trace 要求

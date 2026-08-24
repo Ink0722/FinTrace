@@ -102,7 +102,6 @@ class EvidenceGap(BaseModel):
 
 class CoveredAspect(BaseModel):
     aspect: str
-    claim_ids: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)
 
 
@@ -113,16 +112,8 @@ class EvidenceReview(BaseModel):
     reason: str = ""
 
 
-class Claim(BaseModel):
-    claim_id: str
-    text: str
-    status: Literal["verified", "partial", "unsupported"] = "verified"
-    evidence_ids: list[str] = Field(default_factory=list)
-
-
 class FinalAnswer(BaseModel):
     answer: str
-    used_claim_ids: list[str] = Field(default_factory=list)
     used_evidence_ids: list[str] = Field(default_factory=list)
     limitations_disclosed: list[str] = Field(default_factory=list)
 

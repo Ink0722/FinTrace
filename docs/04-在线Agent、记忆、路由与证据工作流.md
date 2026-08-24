@@ -135,6 +135,8 @@ flowchart TD
 
 Evidence Ledger 将每个工具结果规范为带 `evidence_id` 的事实单元，记录来源、对象、时间、原始定位、计算输入/公式、质量标记和限制。Evidence Reviewer 检查每个用户子问题是否已有充分且相互一致的证据；若否，明确证据缺口并在预算内继续调查或降级回答。
 
+当前主分支不设置通用 Claim 中间层。Planner、Evidence Reviewer 和 Final Answer 直接使用经过工具结果校验的 Evidence；`used_evidence_ids` 记录答案实际采用的证据。研报索引中的 `research_claim` 是带机构归属的领域数据类型，进入在线工作流后同样转换为 Evidence，不代表系统存在一套跨工具的通用 Claim 管线。
+
 最终回答按事实、推论、机构观点和限制分层表达：事实必须能回指证据；推论必须陈述依据与不确定性；研报观点必须标明归属；风险信号不得写为造假定论。答案生成失败返回结构化错误而非模板化伪答案。
 
 ## Prompt、Trace 与治理

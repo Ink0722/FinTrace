@@ -62,7 +62,7 @@ def test_llm_planner_and_reviewer_drive_investigation(monkeypatch) -> None:
                 EvidenceReview(
                     status="sufficient",
                     covered_aspects=[
-                        {"aspect": "文本证据", "claim_ids": [], "evidence_ids": ["EVID-FAKE"]}
+                        {"aspect": "文本证据", "evidence_ids": ["EVID-FAKE"]}
                     ],
                     evidence_gaps=[],
                     reason="检索已覆盖核心问题",

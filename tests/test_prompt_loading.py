@@ -13,8 +13,20 @@ from schemas.memory import MemoryUpdate
 def test_global_policy_has_valid_header() -> None:
     policy = load_prompt("01_global_policy.md")
     assert policy.prompt_id == "fintrace.global_policy"
-    assert policy.version == "1.3.0"
+    assert policy.version == "1.3.1"
     assert "Evidence 边界" in policy.body
+
+
+def test_active_agent_prompts_use_evidence_without_generic_claim_contract() -> None:
+    for filename in (
+        "03_next_action_planner.md",
+        "04_evidence_reviewer.md",
+        "06_final_answer.md",
+    ):
+        assert "verified_claims" not in load_prompt(filename).body
+
+    assert "claim_ids" not in load_prompt("04_evidence_reviewer.md").body
+    assert "used_claim_ids" not in load_prompt("06_final_answer.md").body
 
 
 def test_skill_registry_files_exist_with_headers() -> None:
