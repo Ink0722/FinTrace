@@ -145,6 +145,13 @@ class LlmCallRecord(BaseModel):
     output_schema: str
     latency_ms: int = 0
     status: Literal["success", "recovered", "failed"] = "success"
+    attempt_count: int = 1
+    finish_reason: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    response_chars: int = 0
+    error_type: str | None = None
+    error_message: str | None = None
 
 
 class ToolCallEntry(BaseModel):

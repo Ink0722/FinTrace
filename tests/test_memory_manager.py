@@ -83,6 +83,23 @@ def test_memory_summary_is_deferred_after_an_earlier_llm_failure() -> None:
     assert any("延后会话摘要" in warning for warning in state.warnings)
 
 
+def test_boundary_turn_keeps_recent_messages_without_running_summarizer() -> None:
+    state = _state([Message(role="user", content=f"消息{i}") for i in range(12)], turn_id=6)
+    state.answer_status = "unsupported"
+    called = False
+
+    def runner(*args):
+        nonlocal called
+        called = True
+        return MemoryUpdate(summary="不应执行"), _record()
+
+    prepare_session_memory(state, skill_runner=runner)
+
+    assert called is False
+    assert len(state.messages) == 12
+    assert state.messages[-1].role == "assistant"
+
+
 def test_failed_turn_does_not_persist_session_memory(monkeypatch) -> None:
     state = _state([Message(role="user", content="问题")])
     state.answer_status = "failed"

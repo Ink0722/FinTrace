@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.request_parser
-version: 1.10.0
+version: 1.11.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -40,6 +40,7 @@ output_schema: ParsedRequest
 - `institutions` 只表示研报或观点的发布机构，不表示被研究公司。公司名称以当前问题的分析对象出现时，只写入 `entities`；只有“东吴证券如何评价贵州茅台”“根据东吴证券研报”等明确发布者语法，才将“东吴证券”写入 `institutions`。同一名称作为发布者时，不得再把它当作目标公司。
 - 当前问题中出现疑似公司专名但未能映射证券代码时，将该名称保留在 `unresolved_references`，不得用历史公司、默认公司或行业主题替代。若名称可能既是公司又是普通词，也应保留未解析状态，交由后续可回答性判断处理。
 - “白酒行业、证券板块、光伏产业链、科技产业、医药赛道、市场热点”等以行业、板块、产业、赛道、领域或全市场资讯为分析对象的表达属于主题查询，不应伪造目标公司。只有问题同时明确出现具体公司名称时，才单独解析该公司。
+- 当前问题明确提出新的行业、产业链、上下游、人物或全市场主题时，视为主体切换；不得继续继承上一轮公司。历史公司只可用于当前问题中的明确指代或可唯一确定的省略表达。
 
 2. Time Resolution
 - 如果 Runtime 已提供确定性时间候选，优先使用该结果。
@@ -110,6 +111,7 @@ output_schema: ParsedRequest
 严格返回一个符合下列 Schema 的 JSON 对象：
 
 {
+  "raw_query": "原样复制输入中的 raw_query",
   "entities": ["string"],
   "people": ["string"],
   "periods": ["YYYY-MM-DD or normalized runtime value"],
@@ -133,5 +135,7 @@ output_schema: ParsedRequest
   "unresolved_references": ["string"],
   "missing_slots": ["string"]
 }
+
+`raw_query` 为必填字段，必须与输入中的 `raw_query` 完全一致。所有列表字段均为必填字段；没有内容时返回空数组 `[]`，不得省略。
 
 JSON 对象之外不要输出任何说明。

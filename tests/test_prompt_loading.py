@@ -6,7 +6,7 @@ from harness.prompts import (
     load_prompt,
 )
 from harness.skills import run_skill
-from schemas.request import ParsedRequest
+from schemas.request import FinalAnswer, ParsedRequest
 from schemas.memory import MemoryUpdate
 
 
@@ -109,6 +109,66 @@ def test_run_skill_validates_output_schema() -> None:
     assert record.status == "success"
 
 
+def test_request_parser_restores_authoritative_raw_query_without_retry() -> None:
+    from harness.llm import QwenClient
+
+    class FakeClient(QwenClient):
+        def __init__(self):
+            super().__init__(api_key="test-key")
+            self.calls = 0
+
+        def chat_json(self, messages, temperature=0.0):
+            self.calls += 1
+            return {
+                "choices": [{
+                    "message": {"content": '{"raw_query":"被模型改写的问题","entities":[],"task_family":"unknown"}'},
+                    "finish_reason": "stop",
+                }]
+            }
+
+    client = FakeClient()
+    output, record = run_skill(
+        "request_parser",
+        {"raw_query": "原始用户问题"},
+        client=client,
+    )
+
+    assert isinstance(output, ParsedRequest)
+    assert output.raw_query == "原始用户问题"
+    assert client.calls == 1
+    assert record.status == "success"
+
+
+def test_request_parser_fills_omitted_raw_query_without_retry() -> None:
+    from harness.llm import QwenClient
+
+    class FakeClient(QwenClient):
+        def __init__(self):
+            super().__init__(api_key="test-key")
+            self.calls = 0
+
+        def chat_json(self, messages, temperature=0.0):
+            self.calls += 1
+            return {
+                "choices": [{
+                    "message": {"content": '{"entities":[],"task_family":"realtime_market_query"}'},
+                    "finish_reason": "stop",
+                }]
+            }
+
+    client = FakeClient()
+    output, record = run_skill(
+        "request_parser",
+        {"raw_query": "连续横盘30个交易日"},
+        client=client,
+    )
+
+    assert isinstance(output, ParsedRequest)
+    assert output.raw_query == "连续横盘30个交易日"
+    assert client.calls == 1
+    assert record.status == "success"
+
+
 def test_memory_summarizer_prompt_and_schema_are_active() -> None:
     prompt = load_prompt("07_memory_summarizer.md")
     assert prompt.prompt_id == "fintrace.memory_summarizer"
@@ -126,3 +186,65 @@ def test_memory_summarizer_prompt_and_schema_are_active() -> None:
     assert isinstance(output, MemoryUpdate)
     assert output.summary == "摘要"
     assert record.status == "success"
+
+
+def test_final_answer_retries_semantically_truncated_json() -> None:
+    from harness.llm import QwenClient
+
+    class FakeClient(QwenClient):
+        def __init__(self):
+            super().__init__(api_key="test-key")
+            self.calls = 0
+
+        def chat_json(self, messages, temperature=0.0):
+            self.calls += 1
+            answer = "机构观点显示需求" if self.calls == 1 else "机构观点显示相关产品需求增长。"
+            return {
+                "choices": [{"message": {"content": '{"answer":"' + answer + '","used_evidence_ids":["E1"],"limitations_disclosed":[]}'}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 8},
+            }
+
+    client = FakeClient()
+    output, record = run_skill(
+        "final_answer",
+        {
+            "answer_status": "answered",
+            "supporting_evidence": [{"evidence_id": "E1"}],
+            "limitations": [],
+        },
+        client=client,
+    )
+    assert isinstance(output, FinalAnswer)
+    assert output.answer.endswith("。")
+    assert client.calls == 2
+    assert record.status == "recovered"
+    assert record.attempt_count == 2
+    assert record.prompt_tokens == 12
+    assert record.completion_tokens == 8
+
+
+def test_final_answer_records_length_truncation_failure() -> None:
+    from harness.llm import QwenClient
+
+    class FakeClient(QwenClient):
+        def __init__(self):
+            super().__init__(api_key="test-key")
+
+        def chat_json(self, messages, temperature=0.0):
+            return {
+                "choices": [{"message": {"content": '{"answer":"分析结果仍包括","used_evidence_ids":[],"limitations_disclosed":[]}'}, "finish_reason": "length"}],
+                "usage": {"prompt_tokens": 20, "completion_tokens": 5},
+            }
+
+    output, record = run_skill(
+        "final_answer",
+        {"answer_status": "answered", "supporting_evidence": [], "limitations": []},
+        client=FakeClient(),
+    )
+    assert output is None
+    assert record.status == "failed"
+    assert record.attempt_count == 2
+    assert record.finish_reason == "length"
+    assert record.error_type == "ValueError"
+    assert "finish_reason=length" in record.error_message
+    assert record.latency_ms >= 0

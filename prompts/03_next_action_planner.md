@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.next_action_planner
-version: 2.3.0
+version: 2.3.1
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -34,6 +34,7 @@ output_schema: AgentAction
 - `parsed_request.entities` 是本轮工具参数中上市公司主体的唯一来源。
 - `resolved_context`、`conversation_summary` 和 `memory_hints` 只能帮助理解指代；只有已经由请求解析器写入 `parsed_request.entities` 的继承主体才可使用。
 - 当用户在本轮明确提出新主体时，不得继续使用上一轮公司的代码。若新主体无法解析，应继续执行不依赖公司代码的有效动作，或说明主体解析缺口，不得用历史主体替代。
+- 当 `parsed_request.entities` 为空且当前问题以行业、产业链、上下游或全市场为对象时，所有工具参数都必须保持无公司过滤，不得从历史上下文补入公司代码。
 
 【决策目标】
 在 Capability 约束与剩余 Tool Budget 内，选择对用户尚未解决需求具有最高预期信息增益的**单个下一动作**。

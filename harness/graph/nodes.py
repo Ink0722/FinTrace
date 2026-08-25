@@ -21,6 +21,7 @@ from harness.routing.answerability import check_answerability, is_investigation
 from harness.routing.capability_registry import candidate_capabilities, get_capability
 from harness.routing.direct_gate import build_direct_action
 from harness.routing.financial_period_resolver import resolve_financial_periods
+from harness.routing.entities import is_explicit_topic_subject
 from harness.routing.planner import plan_next_action
 from harness.routing.request_parser import parse_request
 from harness.skills import run_skill
@@ -87,12 +88,16 @@ def resolve_request_node(state: AgentState) -> AgentState:
     state.relevant_memories = select_relevant_findings(state.previous_findings, parsed)
     state.user_request.intent = parsed.task_family
 
-    # Carryover: later turns can resolve pronouns against this context.
+    # Keep one active subject for genuine follow-ups, but end that carryover when
+    # the current turn explicitly switches to an industry/market/person subject.
     if parsed.entities:
         state.current_context.company_ids = parsed.entities[-3:]
         state.current_context.company_names = [
             name for name in (resolver.company_name(company) for company in parsed.entities[-3:]) if name
         ]
+    elif is_explicit_topic_subject(query) or parsed.entity_candidates or parsed.people:
+        state.current_context.company_ids = []
+        state.current_context.company_names = []
     if parsed.periods:
         state.current_context.report_periods = parsed.periods[-4:]
     if parsed.focus_topics:
@@ -206,6 +211,10 @@ def _run_skill_with_breaker(state: AgentState, skill: str, runtime: dict):
 def _plan_via_llm_or_rules(state: AgentState) -> AgentAction:
     """LLM skill (03) picks the next action; the rule queue is the degraded fallback."""
     if state.routing_mode != "investigation":
+        return plan_next_action(state)
+    if _is_company_overview(state):
+        # The bounded overview has a fixed low-cost capability queue. Asking an
+        # LLM to rediscover that queue on every step adds latency but no choice.
         return plan_next_action(state)
     action, record = _run_skill_with_breaker(state, "next_action_planner", planner_runtime(state))
     if record is not None:
@@ -351,7 +360,14 @@ def review_evidence_node(state: AgentState) -> AgentState:
     deterministic = review_evidence(state)
     review = deterministic
     llm_decided = False
-    if state.routing_mode == "investigation":
+    latest_result = state.tool_results[-1] if state.tool_results else None
+    latest_is_no_data = bool(
+        latest_result
+        and latest_result.status.value != "success"
+        and latest_result.error
+        and latest_result.error.error_type.value == "DATA_NOT_AVAILABLE"
+    )
+    if state.routing_mode == "investigation" and not _is_company_overview(state) and not latest_is_no_data:
         llm_review, record = _run_skill_with_breaker(state, "evidence_reviewer", reviewer_runtime(state))
         if record is not None:
             state.llm_calls.append(record)
@@ -372,7 +388,6 @@ def review_evidence_node(state: AgentState) -> AgentState:
     state.evidence_sufficient = review.status == "sufficient"
     state.review_status = review.status
     action = state.current_action
-    latest_result = state.tool_results[-1] if state.tool_results else None
     non_retryable_failure = bool(
         latest_result
         and latest_result.status.value != "success"
@@ -439,6 +454,11 @@ def _company_overview_progress(state: AgentState) -> str | None:
     return "exhausted"
 
 
+def _is_company_overview(state: AgentState) -> bool:
+    parsed = state.parsed_request
+    return bool(parsed and parsed.task_family == "unknown" and len(parsed.entities) == 1)
+
+
 def generate_answer_node(state: AgentState) -> AgentState:
     state.executed_nodes.append("generate_answer")
     if state.answer_status not in {"clarification_required", "unsupported"}:
@@ -458,7 +478,11 @@ def generate_answer_node(state: AgentState) -> AgentState:
     state.errors.append({
         "stage": "generate_answer",
         "error_type": "FINAL_ANSWER_SKILL_FAILED",
-        "message": "The final_answer LLM skill failed; no fallback answer was generated.",
+        "message": (
+            f"[{record.error_type}] {record.error_message}"
+            if record and record.error_message
+            else "The final_answer LLM skill failed; no fallback answer was generated."
+        ),
         "retryable": True,
     })
     return state

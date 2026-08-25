@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.prompt_manifest
-version: 2.3.0
+version: 2.3.1
 language: zh-CN
 depends_on: []
 output_schema: null
@@ -46,7 +46,7 @@ System Prompt = `01_global_policy.md` + 当前 Skill Prompt。
 
 ## Trace 要求
 
-每次 LLM 调用记录：`prompt_id`、`prompt_version`、`model_name`、`temperature`、`input_hash`、`output_schema_version`、`latency_ms`。
+每次 LLM 调用记录：`prompt_id`、`prompt_version`、`model_name`、`temperature`、`input_hash`、`output_schema_version`、`latency_ms`、尝试次数、结束原因、Token 用量、响应字符数及失败原因。
 
 ## 版本策略
 

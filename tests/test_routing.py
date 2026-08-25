@@ -1,4 +1,4 @@
-from schemas.agent_state import CurrentContext
+from schemas.agent_state import AgentState, CurrentContext
 from schemas.request import ParsedRequest
 
 from harness.routing.answerability import check_answerability, is_investigation
@@ -6,6 +6,7 @@ from harness.routing.capability_registry import CAPABILITIES, candidate_capabili
 from harness.routing.direct_gate import build_direct_action
 from harness.routing.entities import extract_document_types
 from harness.routing.request_parser import parse_request
+from harness.runtime_context import final_answer_runtime, planner_runtime
 from tools.entity_resolver import EntityResolver
 
 RESOLVER = EntityResolver()
@@ -57,6 +58,21 @@ def test_industry_topic_routes_to_broad_document_retrieval() -> None:
     assert pre.status == "routeable"
     assert action is not None and action.tool_name == "document_search"
     assert "company_ids" not in action.arguments
+
+
+def test_request_runtime_does_not_expose_stale_session_company() -> None:
+    state = AgentState(
+        session_id="REQUEST-CONTEXT",
+        user_request={"raw_query": "新能源汽车上下游情况"},
+        current_context=CurrentContext(company_ids=["600519.SH"], company_names=["贵州茅台"]),
+        parsed_request=ParsedRequest(
+            raw_query="新能源汽车上下游情况",
+            task_family="document_retrieval",
+        ),
+    )
+
+    assert planner_runtime(state)["resolved_context"]["company_ids"] == []
+    assert final_answer_runtime(state)["resolved_context"]["company_names"] == []
 
 
 def test_broad_market_and_industry_news_route_without_company() -> None:
@@ -172,6 +188,78 @@ def test_market_and_watchlist_phrases_are_rejected_as_realtime_requests() -> Non
         assert parsed.task_family == "realtime_market_query"
         assert parsed.requires_realtime
         assert check_answerability(parsed).status == "unsupported"
+
+
+def test_structured_market_phrases_take_the_fast_unsupported_path() -> None:
+    fallback_calls = []
+
+    def fallback(*args):
+        fallback_calls.append(args)
+        return None
+
+    questions = (
+        "今天主力资金净流入最多的是谁",
+        "查询贵州茅台龙虎榜",
+        "今天有哪些连板强势股",
+        "600519.SH当前换手率和动态市盈率是多少",
+        "今天有哪些大宗交易",
+    )
+    for question in questions:
+        parsed = parse_request(
+            question,
+            resolver=RESOLVER,
+            knowledge_cutoff="2026-05-28",
+            llm_fallback=fallback,
+        )
+        assert parsed.task_family == "realtime_market_query"
+        assert parsed.requires_realtime
+        assert check_answerability(parsed).status == "unsupported"
+    assert fallback_calls == []
+
+
+def test_market_technical_phrases_from_session_31_skip_llm_fallback() -> None:
+    fallback_calls = []
+
+    def fallback(*args):
+        fallback_calls.append(args)
+        return None
+
+    questions = (
+        "万方发展主力控仓比例，和主力成本是多少",
+        "华星创业主力控盘比例",
+        "武汉凡谷金叉",
+        "请问凯美特气。它的走势是什么？",
+        "中国核建资金流出",
+        "600132主力增仓占比",
+        "金鸿顺自由流通市值是多少",
+        "有研新材是什么形态",
+        "近1月横盘且筹码高度集中的股票有哪些？",
+        "解释融资余额减少",
+    )
+    for question in questions:
+        parsed = parse_request(
+            question,
+            resolver=RESOLVER,
+            knowledge_cutoff="2026-05-28",
+            llm_fallback=fallback,
+        )
+        assert parsed.task_family == "realtime_market_query", question
+        assert parsed.requires_realtime, question
+        assert check_answerability(parsed).status == "unsupported", question
+    assert fallback_calls == []
+
+
+def test_market_terms_do_not_override_explicit_financial_context() -> None:
+    operating_cost = parse_request("600519.SH 2024年营业成本和主力成本", resolver=RESOLVER)
+    business_trend = parse_request("分析600519.SH近三年的经营走势", resolver=RESOLVER)
+    business_form = parse_request("查找600519.SH的业务形态和经营模式", resolver=RESOLVER)
+
+    assert operating_cost.task_family == "financial_metric_query"
+    assert operating_cost.metrics == ["OPERATING_COST"]
+    assert operating_cost.capability_gaps == ["realtime_market_data_unavailable"]
+    assert not business_trend.requires_realtime
+    assert not business_form.requires_realtime
+    assert business_form.task_family == "document_retrieval"
 
 
 def test_mixed_supported_and_realtime_request_keeps_supported_task() -> None:

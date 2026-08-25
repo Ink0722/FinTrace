@@ -64,11 +64,27 @@ def budget(state: AgentState) -> dict:
     }
 
 
+def resolved_request_context(state: AgentState) -> dict:
+    """Return session context constrained to entities resolved for this turn."""
+    context = state.current_context.model_dump()
+    if state.parsed_request is None:
+        return context
+
+    company_names = dict(zip(state.current_context.company_ids, state.current_context.company_names))
+    context["company_ids"] = list(state.parsed_request.entities)
+    context["company_names"] = [
+        company_names[company_id]
+        for company_id in state.parsed_request.entities
+        if company_id in company_names
+    ]
+    return context
+
+
 def planner_runtime(state: AgentState) -> dict:
     return {
         "raw_query": state.user_request.raw_query,
         "parsed_request": state.parsed_request.model_dump() if state.parsed_request else None,
-        "resolved_context": state.current_context.model_dump(),
+        "resolved_context": resolved_request_context(state),
         "conversation_summary": state.conversation_summary,
         "memory_hints": state.relevant_memories,
         "candidate_capabilities": capability_descriptors(state.candidate_capabilities),
@@ -84,7 +100,7 @@ def reviewer_runtime(state: AgentState) -> dict:
     return {
         "raw_query": state.user_request.raw_query,
         "parsed_request": state.parsed_request.model_dump() if state.parsed_request else None,
-        "resolved_context": state.current_context.model_dump(),
+        "resolved_context": resolved_request_context(state),
         "evidence_ledger": evidence_summary(state),
         "tool_call_history": [entry.model_dump() for entry in state.tool_call_history],
         "available_capabilities": capability_descriptors(state.candidate_capabilities),
@@ -97,7 +113,7 @@ def repair_runtime(state: AgentState, errors: list[str]) -> dict:
     return {
         "raw_query": state.user_request.raw_query,
         "parsed_request": state.parsed_request.model_dump() if state.parsed_request else None,
-        "resolved_context": state.current_context.model_dump(),
+        "resolved_context": resolved_request_context(state),
         "failed_action": action.model_dump() if action else None,
         "validator_error": errors,
         "capability_definition": capability.model_dump() if capability else None,
@@ -119,7 +135,7 @@ def final_answer_runtime(state: AgentState) -> dict:
     )
     return {
         "raw_query": state.user_request.raw_query,
-        "resolved_context": state.current_context.model_dump(),
+        "resolved_context": resolved_request_context(state),
         "answer_status": state.answer_status,
         "supporting_evidence": evidence_summary(state),
         "limitations": list(dict.fromkeys([*capability_gaps, *gaps, *state.warnings]))[:10],

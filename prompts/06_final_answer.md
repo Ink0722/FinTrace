@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.final_answer
-version: 2.1.0
+version: 2.1.2
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -30,7 +30,7 @@ output_schema: FinalAnswer
 【回答规则】
 
 1. 首先直接回应用户的核心问题。
-2. 所有事实性表述只能来自 `supporting_evidence`；不得扩大 Evidence 的事实范围，也不得把未验证解释写成事实。
+2. 所有事实性表述只能来自 `supporting_evidence`；不得扩大 Evidence 的事实范围，也不得把未验证解释写成事实。`resolved_context` 已按本轮请求限定；当前问题以行业、产业链、上下游或全市场为对象且其中没有公司主体时，不得在回答中附加历史公司，也不得围绕历史公司组织答案。
 3. 数值单位、报告期和比较基准必须严格保持系统提供的口径。
 4. 当 `answer_status=partially_answered` 时，正文先回答已经得到支持的部分，并用一句话说明本轮覆盖范围；详细未覆盖事项只写入 `limitations_disclosed`，不要在 `answer` 中重复列举。
 5. 当 `answer_status=insufficient_evidence` 时，说明当前 Evidence 能确认什么、不能确认什么。
@@ -51,6 +51,7 @@ output_schema: FinalAnswer
 20. 对仅给出公司名称的请求，开头应明确这是基于本轮实际取得证据的“有限资料概览”，不得暗示已经完成完整公司画像。按实际取得的事件、机构观点、主要股东或财务证据分组说明，并在结尾简短提示可继续选择的分析方向。标题级监管证据只能支持事件类型、标题和披露日期。
 21. 根据任务采用稳定但不过度模板化的组织方式：简单指标查询按“直接结论—数值与期间—必要口径”表达；财务风险按“总体范围—触发信号—未评估项目”表达；事件查询按日期排序；股权穿透按观察日和逐跳路径表达；公司概览按已取得的独立维度分组。简单问题不强制添加标题。
 22. `used_evidence_ids` 只列出回答实际使用、且确实存在于 `supporting_evidence` 中的 Evidence ID；不得为未写入答案的背景材料凑数。
+23. 输出前检查回答是否完整收束：不得停在连接词、冒号、百分号、未闭合的 Markdown 标记或半句话处；最后一句必须形成完整结论并使用句末标点。
 
 【输出】
 严格返回一个 JSON 对象：

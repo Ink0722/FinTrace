@@ -35,6 +35,12 @@ def prepare_session_memory(state: AgentState, *, skill_runner: SkillRunner | Non
     )
     state.relevant_memories = select_relevant_findings(state.previous_findings, state.parsed_request)
 
+    # Boundary and clarification turns remain available in recent messages, but
+    # do not justify another LLM call solely to refresh the long-term summary.
+    if state.answer_status in {"unsupported", "clarification_required"}:
+        state.messages = state.messages[-RECENT_MESSAGE_LIMIT:]
+        return
+
     if not _should_summarize(state):
         state.messages = state.messages[-RECENT_MESSAGE_LIMIT:]
         return

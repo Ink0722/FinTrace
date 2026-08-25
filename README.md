@@ -196,11 +196,13 @@ Copy-Item .env.example .env
 QWEN_API_KEY=
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_MODEL=
+QWEN_MAX_OUTPUT_TOKENS=4096
 
 # 请求解析、规划、审查、修复和记忆摘要模型；可与主模型相同
 QWEN_PLANNER_API_KEY=
 QWEN_PLANNER_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_PLANNER_MODEL=
+QWEN_PLANNER_MAX_OUTPUT_TOKENS=2048
 
 # 统一知识截止日，由工作流注入，Planner 无权修改
 FINTRACE_KNOWLEDGE_CUTOFF=2026-05-28
@@ -210,7 +212,7 @@ FINTRACE_RUNTIME_DB=runtime/fintrace.sqlite3
 FINTRACE_EVAL_LOG_ENABLED=true
 ```
 
-完整索引路径和 Embedding 配置见 [.env.example](.env.example)。未配置 LLM 或调用失败时，系统返回结构化错误，不使用确定性模板伪装模型回答。
+两个 Token 上限分别控制最终回答与规划类 Skill，未设置时沿用模型服务默认值。完整索引路径和 Embedding 配置见 [.env.example](.env.example)。未配置 LLM 或调用失败时，系统返回结构化错误，不使用确定性模板伪装模型回答。
 
 ## 启动方式
 
@@ -338,7 +340,7 @@ F:\conda_envs\FinTrace\python.exe -m data_pipeline.documents.build_index finaliz
 F:\conda_envs\FinTrace\python.exe -m pytest -q --basetemp runtime\pytest-run
 ```
 
-当前基线：`239 passed`。
+当前基线：`281 passed`（2026-08-26）。
 
 测试文件按职责划分：
 

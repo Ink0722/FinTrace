@@ -36,9 +36,23 @@ DEFAULT_METRICS = ["REVENUE", "NET_PROFIT_PARENT", "OPERATING_CASHFLOW"]
 EXPLANATION_MARKERS = ("为什么", "原因", "如何", "怎么看", "意味着", "是否异常", "合理吗", "背后")
 INVESTIGATION_MARKERS = ("分析", "调查", "排查", "诊断", "综合", "尽调", "风险画像", "结合", "并评估", "研判")
 COMPARE_MARKERS = ("变化", "比较", "对比", "同比增长", "同比下降", "趋势", "涨了", "跌了", "增长多少", "下降多少", "变动")
+MARKET_FLOW_MARKERS = (
+    "主力资金", "主力控盘", "主力控仓", "主力成本", "主力持仓", "主力增仓", "增仓占比",
+    "资金流向", "资金流入", "资金流出", "资金净流入", "资金净流出", "融资余额", "融券余额",
+)
+MARKET_TECHNICAL_MARKERS = (
+    "走势", "金叉", "死叉", "横盘", "放量", "缩量", "量价齐升", "均线", "压力位", "支撑位",
+    "筹码", "形态", "自由流通市值",
+)
 REALTIME_MARKERS = (
     "股价", "市值", "行情", "涨跌幅", "K线", "盘口", "实时", "今日净值", "现价",
-    "涨停", "跌停", "大盘", "自选股", "涨最多", "跌最狠",
+    "涨停", "跌停", "大盘", "自选股", "涨最多", "跌最狠", "龙虎榜", "大宗交易",
+    "强势股", "连板", "换手率", "动态市盈率", "市净率", "成交量", "成交额", "振幅", "波动率",
+    *MARKET_FLOW_MARKERS,
+    *MARKET_TECHNICAL_MARKERS,
+)
+NON_MARKET_TREND_PHRASES = (
+    "经营走势", "业绩走势", "营收走势", "利润走势", "现金流走势", "业务形态", "经营形态",
 )
 PREDICTION_MARKERS = (
     "会涨", "会跌", "能涨", "目标价是多少", "值不值得买", "买入建议", "预测未来", "明年会",
@@ -208,7 +222,11 @@ def _infer_task_family(parsed: ParsedRequest, query: str) -> str:
 
 
 def _requires_realtime_data(query: str) -> bool:
-    if any(marker in query for marker in REALTIME_MARKERS):
+    matched = [marker for marker in REALTIME_MARKERS if marker in query]
+    if matched and not (
+        set(matched).issubset({"走势", "形态"})
+        and any(phrase in query for phrase in NON_MARKET_TREND_PHRASES)
+    ):
         return True
     if any(marker in query for marker in ("经营表现", "财务表现", "业绩表现")):
         return False
@@ -255,7 +273,15 @@ def _infer_comparison(parsed: ParsedRequest, query: str) -> str:
 
 
 def _infer_metrics(query: str) -> list[str]:
-    selected = [code for code, keywords in METRIC_KEYWORDS if any(keyword in query for keyword in keywords)]
+    selected = []
+    for code, keywords in METRIC_KEYWORDS:
+        if not any(keyword in query for keyword in keywords):
+            continue
+        if code == "OPERATING_COST" and "主力成本" in query and not any(
+            phrase in query for phrase in ("营业成本", "经营成本")
+        ):
+            continue
+        selected.append(code)
     return selected or []
 
 

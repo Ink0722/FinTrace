@@ -11,6 +11,7 @@ from tools.entity_resolver import EntityResolver
 DEMO_COMPANY_ALIASES = {"示例公司": "000001.SZ"}
 PRONOUN_COMPANY = ("这家公司", "该公司", "本公司", "标的公司", "这家企业")
 INDUSTRY_TOPIC_MARKERS = ("行业", "板块", "产业链", "产业", "赛道", "领域")
+SUBJECT_SWITCH_TOPIC_MARKERS = (*INDUSTRY_TOPIC_MARKERS, "上游", "下游", "上下游")
 MARKET_WIDE_MARKERS = (
     "市场整体", "市场动态", "市场有哪些", "大盘", "全市场", "市场热点",
     "财经大事", "财经动态", "热点资讯", "热点需要关注", "利好利空消息",
@@ -116,6 +117,11 @@ def extract_entities(
 
 def is_industry_topic_query(query: str) -> bool:
     return any(marker in query for marker in (*INDUSTRY_TOPIC_MARKERS, *MARKET_WIDE_MARKERS))
+
+
+def is_explicit_topic_subject(query: str) -> bool:
+    """Whether this turn explicitly replaces a previously active company subject."""
+    return any(marker in query for marker in (*SUBJECT_SWITCH_TOPIC_MARKERS, *MARKET_WIDE_MARKERS))
 
 
 def infer_unresolved_company_terms(query: str) -> list[str]:
