@@ -144,6 +144,21 @@ Unknown missing rows and malformed vectors still fail the build.
 uploaded files. It does not generate vectors; offline vector construction has a
 single Batch File implementation.
 
+## Company alias index
+
+```powershell
+F:\conda_envs\FinTrace\python.exe -m data_pipeline.entity_alias.build_index
+```
+
+The builder combines successful frozen company profiles under
+`data/source/company_profiles/` with names and codes found in normalized
+research reports, announcements, financial metrics and ownership holdings. It
+writes `data/indexes/entity_alias/company_aliases.sqlite`. Company profiles are
+loaded first so the security short name becomes the canonical display name;
+legal names and former names remain searchable aliases. Failed profile fetches
+are excluded. The online resolver reads this local index and never calls
+AKShare.
+
 ## Financial metric index
 
 Build the narrow online financial index from the three normalized statement files:

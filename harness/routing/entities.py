@@ -10,11 +10,24 @@ from tools.entity_resolver import EntityResolver
 # Explicit demo aliases kept for the sample scenario; never used as a silent fallback.
 DEMO_COMPANY_ALIASES = {"示例公司": "000001.SZ"}
 PRONOUN_COMPANY = ("这家公司", "该公司", "本公司", "标的公司", "这家企业")
+INDUSTRY_TOPIC_MARKERS = ("行业", "板块", "产业链", "产业", "赛道", "领域")
+MARKET_WIDE_MARKERS = (
+    "市场整体", "市场动态", "市场有哪些", "大盘", "全市场", "市场热点",
+    "财经大事", "财经动态", "热点资讯", "热点需要关注", "利好利空消息",
+    "利好消息", "利空消息",
+)
+GENERIC_SUBJECT_TERMS = {
+    "市场", "证券", "股票", "行业", "板块", "产业链", "贵金属", "科技产业",
+    "房地产产业链", "财务数据", "财务风险", "金融风险", "研究报告", "财务报告",
+}
 
 # KB-valid document vocabulary (C2): fine-grained intent stays in the query text.
 DOCUMENT_TYPE_KEYWORDS = {
-    "announcement": ("问询函", "监管问询", "年报", "年度报告", "审计报告", "审计意见", "公告", "原文", "披露", "违规", "处罚"),
-    "research_report": ("研报", "研究报告", "机构观点"),
+    "announcement": (
+        "问询函", "监管问询", "年报", "年度报告", "财务报告", "季度报告", "一季报",
+        "三季报", "半年报", "审计报告", "审计意见", "公告", "原文", "披露", "违规", "处罚",
+    ),
+    "research_report": ("研报", "研究报告", "机构观点", "机构研究"),
 }
 EVENT_TYPE_KEYWORDS = {
     "regulatory_inquiry": ("问询函", "监管问询"),
@@ -82,6 +95,14 @@ def extract_entities(
         elif resolution.status == "ambiguous":
             result.ambiguous.append({"term": bare, "candidates": resolution.candidates})
 
+    if (
+        not result.company_ids
+        and not result.ambiguous
+        and not result.unresolved_terms
+        and not any(pronoun in query for pronoun in PRONOUN_COMPANY)
+    ):
+        result.unresolved_terms.extend(infer_unresolved_company_terms(query))
+
     if not result.company_ids and not result.ambiguous and not result.unresolved_terms:
         if any(pronoun in query for pronoun in PRONOUN_COMPANY) and current_context and len(
             set(current_context.company_ids)
@@ -91,6 +112,40 @@ def extract_entities(
 
     result.holder_names = extract_holder_names(query)
     return result
+
+
+def is_industry_topic_query(query: str) -> bool:
+    return any(marker in query for marker in (*INDUSTRY_TOPIC_MARKERS, *MARKET_WIDE_MARKERS))
+
+
+def infer_unresolved_company_terms(query: str) -> list[str]:
+    """Extract a likely explicit company subject without treating broad topics as companies."""
+    normalized = query.strip().strip("，。！？?；;：: ")
+    if not normalized or (is_industry_topic_query(normalized) and "属于" not in normalized):
+        return []
+    if any(marker in normalized for marker in MARKET_WIDE_MARKERS):
+        return []
+
+    candidates: list[str] = []
+    patterns = (
+        r"^([\u4e00-\u9fffA-Za-z0-9·]{2,16}?)(?:的)(?:近期|最近|最新|财务|研究|机构|股东|市场|表现|动态|数据|报告|情况)",
+        r"^([\u4e00-\u9fffA-Za-z0-9·]{2,16}?)(?:近期|最近|最新|今天|今日)(?:的)?(?:市场|财务|研究|表现|走势|动态|情况)",
+        r"^([\u4e00-\u9fffA-Za-z0-9·]{2,16}?)(?:属于|怎么样|如何$)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, normalized)
+        if match:
+            candidates.append(match.group(1))
+            break
+
+    if not candidates and re.fullmatch(r"[\u4e00-\u9fffA-Za-z0-9·]{2,12}", normalized):
+        candidates.append(normalized)
+
+    return list(dict.fromkeys(
+        candidate for candidate in candidates
+        if candidate not in GENERIC_SUBJECT_TERMS
+        and not any(marker in candidate for marker in MARKET_WIDE_MARKERS)
+    ))
 
 
 def extract_holder_names(query: str) -> list[str]:

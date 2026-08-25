@@ -7,6 +7,7 @@ from schemas.tool_calls import ToolCall
 from schemas.tool_results import ToolResult
 from tools.entity_resolver import EntityResolver
 from tools.registry import execute_tool
+from tools.argument_validation import validate_tool_arguments
 
 from harness.answering import build_structured_error_answer
 from harness.evidence.ledger import merge_evidence
@@ -294,6 +295,10 @@ def execute_one_tool_node(state: AgentState) -> AgentState:
     capability = get_capability(action.capability or "")
     if state.knowledge_cutoff and capability and capability.supports_knowledge_cutoff:
         arguments.setdefault("knowledge_cutoff", state.knowledge_cutoff)
+    preflight = validate_tool_arguments(action.tool_name or "", action.operation or "", arguments)
+    if preflight.errors or preflight.normalized_arguments is None:
+        raise RuntimeError(f"validated tool arguments failed execution preflight: {preflight.errors}")
+    arguments = preflight.normalized_arguments
     call = ToolCall(
         tool_call_id=f"CALL-{state.total_tool_calls + 1:03d}",
         tool_name=ToolName(action.tool_name),
@@ -472,6 +477,8 @@ def _answer_status_from_review_state(state: AgentState) -> str:
 
 def persist_session_node(state: AgentState) -> AgentState:
     state.executed_nodes.append("persist_session")
+    if state.answer_status == "failed" or state.workflow_status in {"failed", "llm_failed"}:
+        return state
     prepare_session_memory(state)
     store = SessionStore()
     store.save(

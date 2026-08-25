@@ -8,7 +8,8 @@ from tools.entity_resolver import EntityResolver
 
 from harness.evidence.review import answer_status_from_review, review_evidence
 from harness.memory.session_store import SessionStore
-from harness.routing.action_validator import validate_action
+from harness.runtime_context import evidence_summary
+from harness.routing.action_validator import repair_action, validate_action
 from harness.routing.planner import plan_next_action
 from harness.routing.entities import extract_entities
 from harness.routing.time_resolver import resolve_time
@@ -99,6 +100,32 @@ def test_research_investigation_queries_views_before_documents() -> None:
     assert second.arguments["document_types"] == ["research_report"]
 
 
+def test_action_validator_normalizes_research_claim_type_alias() -> None:
+    parsed = ParsedRequest(
+        raw_query="东吴证券如何评价贵州茅台",
+        entities=["600519.SH"],
+        institutions=["东吴证券"],
+        task_family="research_view_query",
+        research_claim_types=["analyst_judgment"],
+    )
+    state = make_state(parsed)
+    action = AgentAction(
+        action="call_tool",
+        capability="research_view_query",
+        tool_name="research_analysis",
+        operation="view_query",
+        arguments={
+            "company_ids": ["600519.SH"],
+            "institutions": ["东吴证券"],
+            "research_claim_types": ["analyst_judgment"],
+        },
+    )
+
+    assert validate_action(action, state) == []
+    assert "research_claim_types" not in action.arguments
+    assert action.arguments["claim_types"] == ["analyst_judgment"]
+
+
 def test_event_investigation_queries_events_before_documents() -> None:
     parsed = ParsedRequest(
         raw_query="600519.SH为何收到监管处罚，具体金额是多少",
@@ -117,6 +144,32 @@ def test_event_investigation_queries_events_before_documents() -> None:
     second = plan_next_action(state)
     assert second.tool_name == "document_search"
     assert second.arguments["document_types"] == ["announcement"]
+
+
+def test_runtime_evidence_summary_caps_document_chunks_without_crowding_structured_evidence() -> None:
+    state = make_state()
+    documents = [
+        Evidence(
+            evidence_id=f"DOC-{index}", evidence_type="document_chunk",
+            source={"document_id": f"D-{index}"}, fact={"text": f"文档{index}"},
+        )
+        for index in range(8)
+    ]
+    structured = [
+        Evidence(
+            evidence_id=f"FIN-{index}", evidence_type="financial_statement_metric",
+            source={"company_id": "600519.SH"}, fact={"value": index}, support_level="derived",
+        )
+        for index in range(10)
+    ]
+    state.evidence_ledger = [*documents, *structured]
+
+    summary = evidence_summary(state)
+
+    assert len(summary) == 12
+    assert sum(item["evidence_type"] == "document_chunk" for item in summary) == 4
+    assert sum(item["evidence_type"] != "document_chunk" for item in summary) == 8
+    assert all("support_level" in item for item in summary)
 
 
 # --- time resolver ---
@@ -249,6 +302,48 @@ def test_validate_action_normalizes_company_names() -> None:
     errors = validate_action(action, state, resolver=EntityResolver())
     assert errors == []
     assert action.arguments["company_ids"] == ["601919.SH"]
+
+
+def test_validate_action_rejects_company_from_previous_context() -> None:
+    parsed = ParsedRequest(raw_query="中船汉光", entities=["300847.SZ"])
+    state = make_state(parsed)
+    state.current_context = CurrentContext(company_ids=["000801.SZ"])
+    action = AgentAction(
+        action="call_tool",
+        capability="ownership_snapshot",
+        tool_name="ownership_analysis",
+        operation="holding_query",
+        arguments={"operation": "holding_query", "company_ids": ["000801.SZ"]},
+        reason="test",
+    )
+
+    errors = validate_action(action, state, resolver=EntityResolver())
+
+    assert "company_ids must come from the current parsed request" in errors
+
+
+def test_action_schema_preflight_repairs_extra_planner_metadata() -> None:
+    parsed = ParsedRequest(raw_query="最新事件", entities=["600519.SH"])
+    state = make_state(parsed)
+    action = AgentAction(
+        action="call_tool",
+        capability="event_query",
+        tool_name="event_timeline",
+        operation="event_query",
+        arguments={
+            "entity_ids": ["600519.SH"],
+            "time_mode": "latest",
+        },
+        reason="test",
+    )
+
+    errors = validate_action(action, state, resolver=EntityResolver())
+    repaired = repair_action(action, errors, state)
+
+    assert any("time_mode" in error and "extra inputs" in error.lower() for error in errors)
+    assert repaired is not None
+    assert "time_mode" not in repaired.arguments
+    assert validate_action(repaired, state, resolver=EntityResolver()) == []
 
 
 def test_document_queries_use_query_in_duplicate_fingerprint() -> None:

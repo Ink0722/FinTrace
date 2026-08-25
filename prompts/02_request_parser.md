@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.request_parser
-version: 1.7.0
+version: 1.10.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -37,6 +37,9 @@ output_schema: ParsedRequest
 - 不得虚构公司代码或人物 ID。
 - 历史摘要和 `memory_hints` 只用于恢复省略语境；当前用户明确输入新主体或新任务时，以本轮输入为准。
 - `memory_hints` 不等于本轮 Evidence，不得据此直接回答金融事实。
+- `institutions` 只表示研报或观点的发布机构，不表示被研究公司。公司名称以当前问题的分析对象出现时，只写入 `entities`；只有“东吴证券如何评价贵州茅台”“根据东吴证券研报”等明确发布者语法，才将“东吴证券”写入 `institutions`。同一名称作为发布者时，不得再把它当作目标公司。
+- 当前问题中出现疑似公司专名但未能映射证券代码时，将该名称保留在 `unresolved_references`，不得用历史公司、默认公司或行业主题替代。若名称可能既是公司又是普通词，也应保留未解析状态，交由后续可回答性判断处理。
+- “白酒行业、证券板块、光伏产业链、科技产业、医药赛道、市场热点”等以行业、板块、产业、赛道、领域或全市场资讯为分析对象的表达属于主题查询，不应伪造目标公司。只有问题同时明确出现具体公司名称时，才单独解析该公司。
 
 2. Time Resolution
 - 如果 Runtime 已提供确定性时间候选，优先使用该结果。
@@ -70,6 +73,9 @@ output_schema: ParsedRequest
 - 用户只问主要股东、持股比例或名单时选择 `ownership_snapshot`；要求两个时点的股东进入、退出、增减持时选择 `ownership_compare`；要求“穿透、间接持有、多层路径、通过谁持有”时选择 `ownership_penetration`。
 - 用户只要求筛选、列举或按时间整理事件时选择 `event_query`；要求结合公告解释事件经过、调查事件影响或综合多类证据时选择 `event_investigation`。是否需要聚类由 Planner 根据 Runtime Capability 决定，Parser 不选择 operation。
 - 用户查询机构观点、评级、盈利预测或研报风险提示时选择 `research_view_query`；要求解释观点理由、依据、详细上下文时选择 `research_investigation`；明确要求查找研报原文、指定语句或出处时选择 `document_retrieval`。
+- 用户查询某公司的“近期动态、最新消息、新闻或重要事件”时选择 `event_investigation`；先定位结构化事件，再由 Planner 判断是否需要公告正文。不得将此类请求误路由为股权概览。
+- 用户明确查询财务报告、季报、半年报或公告原文时选择 `document_retrieval`，并保留 `announcement` 文档类型；明确查询研究报告、机构研究或研报原文时保留 `research_report` 文档类型。
+- 无具体公司的行业、板块、产业链或市场主题资料查询选择 `document_retrieval`。这类请求允许 `entities` 为空，但主题词必须保留在原始查询中供检索使用。
 - `event_types` 只能使用：`regulatory_inquiry`、`regulatory_penalty`、`audit_opinion`、`controller_change`、`share_pledge`、`financial_restated`、`major_litigation`、`risk_warning`。其中监管处罚、监管措施、警示函、立案和纪律处分使用 `regulatory_penalty`；风险警示和退市风险警示使用 `risk_warning`。
 
 槽位保留规则：
@@ -95,6 +101,9 @@ output_schema: ParsedRequest
 6. 看起来可能 Unsupported 的请求
 你可以识别实时行情、用户账户、确定性预测等语义意图，但不要在本 Skill 判断 FinTrace 是否真的支持。Capability 是否可用由 Pre-Answerability 层决定。
 - 一个请求同时包含支持和不支持部分时，应保留可支持的 `task_family`，并将不可支持部分写入 `capability_gaps`，不得因为局部缺口放弃整个请求。
+- “涨停、跌停、跑赢大盘、自选股涨跌、当前股价”等依赖当日行情或个人组合状态的请求属于 `realtime_market_query` 或相应能力缺口，不得路由到财务、事件或文档工具猜测回答。
+- “近期走势、市场表现、股价表现”等依赖行情序列的请求同样属于实时行情能力；“经营表现、财务表现、业绩表现”仍属于财务分析，不得仅因包含“表现”而误判为行情。
+- “能买吗、还能买吗、是否值得买入”等要求确定性投资建议的请求属于 `prediction_request`，或在同时存在可核验财务问题时作为 `deterministic_investment_recommendation_unavailable` 写入 `capability_gaps`。
 - `capability_gaps`只记录能力缺口，不记录普通的证据缺口。可用值包括 `realtime_market_data_unavailable`、`deterministic_investment_recommendation_unavailable`、`user_account_operation_unavailable`。
 
 【输出】

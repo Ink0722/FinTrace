@@ -77,7 +77,10 @@ def _action_queue(parsed: ParsedRequest) -> list[AgentAction]:
     elif family == "event_investigation":
         if entities:
             queue.append(_event_action(parsed))
-        queue.append(_document_action(parsed, force_announcement=True))
+        if any(marker in parsed.raw_query for marker in ("动态", "消息", "新闻")):
+            queue.append(_document_action(parsed))
+        else:
+            queue.append(_document_action(parsed, force_announcement=True))
         if entities and parsed.metrics and parsed.periods:
             queue.append(_metric_query_action(parsed))
     elif family == "research_investigation":

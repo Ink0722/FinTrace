@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.evidence_reviewer
-version: 2.0.0
+version: 2.1.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -46,7 +46,7 @@ output_schema: EvidenceReview
 10. 部分重要 Aspect 已支持、另一些无法继续解决时，返回 `partial`。
 11. 用户核心请求仍未被充分支持，但仍存在有价值的 Capability 可以继续调查时，返回 `continue`。
 12. 用户核心请求无法得到支持，且没有有价值的 Capability 可继续使用时，返回 `insufficient`。
-13. `task_family=unknown`且唯一公司已经解析时，将请求视为有限资料概览。若仍有未调用的事件、研报观点或主要股东能力，应返回 `continue`；取得至少两个有证据的方面，或可用能力已合理穷尽后，返回 `partial`，不得仅因用户未指定方向而判定无证据。
+13. `task_family=unknown`且唯一公司已经解析时，将请求视为有限资料概览。事件、研报观点和主要股东快照分别算一个独立方面，文档原文补证不单独计数。少于两个有 Evidence 的方面且仍有可用候选能力时返回 `continue`；取得至少两个方面，或候选能力已合理穷尽后返回 `partial`。达到两个方面后，即使第三个方面尚未调用也不再要求继续，不得仅因用户未指定方向而判定无证据。
 14. 请求含有 `capability_gaps`时，只评价可支持部分的证据覆盖；能力缺口进入 limitation，不得抹去已获得证据。
 
 【专项证据充分性】

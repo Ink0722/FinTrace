@@ -16,7 +16,7 @@ RECENT_MESSAGE_LIMIT = 12
 RECENT_MESSAGE_RETAIN_AFTER_SUMMARY = 8
 SUMMARY_INTERVAL_TURNS = 6
 SUMMARY_CHAR_THRESHOLD = 12_000
-MAX_SUMMARY_CHARS = 4_000
+MAX_SUMMARY_CHARS = 2_000
 MAX_VERIFIED_FINDINGS = 100
 MAX_RELEVANT_FINDINGS = 8
 
@@ -93,6 +93,8 @@ def update_verified_findings(
 
     fallback_company = parsed.entities[0] if parsed and len(parsed.entities) == 1 else None
     for evidence in evidence_items:
+        if evidence.support_level == "weak":
+            continue
         evidence_id = str(evidence.evidence_id or "").strip()
         if not evidence_id:
             continue

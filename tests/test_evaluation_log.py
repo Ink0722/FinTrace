@@ -8,8 +8,8 @@ def test_observability_store_records_complete_turns(monkeypatch, tmp_path) -> No
     monkeypatch.setenv("FINTRACE_RUNTIME_DB", str(database_path))
     monkeypatch.setenv("FINTRACE_EVAL_LOG_ENABLED", "true")
 
-    first = run_agent("600519.SH 2024年营业收入是多少", session_id="TEST-EVAL-TURNS")
-    second = run_agent("这家公司十大股东是谁", session_id="TEST-EVAL-TURNS")
+    first = run_agent("如何修改银行卡", session_id="TEST-EVAL-TURNS")
+    second = run_agent("现在的实时行情是多少", session_id="TEST-EVAL-TURNS")
 
     records = list_runs(session_id="TEST-EVAL-TURNS")
     assert first.turn_id == 1

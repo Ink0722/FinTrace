@@ -1,6 +1,6 @@
 ---
 prompt_id: fintrace.memory_summarizer
-version: 1.0.0
+version: 1.1.0
 language: zh-CN
 depends_on:
   - fintrace.global_policy@1.x
@@ -24,9 +24,9 @@ output_schema: MemoryUpdate
 3. 金融事实只有在 `verified_findings` 中存在对应 Evidence ID 时才能作为已验证事实保留。
 4. 用户自己的陈述可以写成“用户曾提出/关注”，不得改写为客观事实。
 5. 工具失败、模型猜测和未经验证的数字不得写成事实。
-6. 新话题与旧话题应分别表述，不得机械建立关联。
+6. 新话题与旧话题应分别表述，不得机械建立关联。当前消息已经明确切换公司、任务或业务领域时，不得把旧话题的未完成问题继续列为当前 `open_questions`。
 7. 删除寒暄、重复表达、界面说明和已经失去作用的过程信息。
-8. 摘要使用简洁中文，建议不超过 2000 字。
+8. 摘要使用简洁中文，通常控制在 600 至 1000 个中文字符；复杂长对话可以适当增加，但不得超过 2000 个字符。
 
 【输出】
 严格返回 JSON：

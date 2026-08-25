@@ -68,6 +68,7 @@ runtime/*.sqlite3
 runtime/*.sqlite3-shm
 runtime/*.sqlite3-wal
 runtime/pytest-*/
+runtime/evaluation/
 !runtime/README.md
 
 # Office/editor temporary files

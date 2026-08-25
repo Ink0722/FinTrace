@@ -1,4 +1,4 @@
-from schemas.agent_state import AgentState
+from schemas.agent_state import AgentState, CurrentContext
 from schemas.enums import ErrorType, ToolName, ToolStatus
 from schemas.tool_calls import ToolCall
 from schemas.tool_results import ToolError, ToolResult
@@ -52,9 +52,16 @@ def test_investigation_loop_respects_budget(monkeypatch) -> None:
 
 
 def test_pronoun_inherits_from_session_context() -> None:
-    first = run_agent("600519.SH 2024年营业收入是多少", session_id="TEST-GATE-5")
-    assert first.parsed_request is not None and first.parsed_request.entities == ["600519.SH"]
+    SessionStore().save(
+        "TEST-GATE-5",
+        current_context=CurrentContext(company_ids=["600519.SH"]),
+        conversation_summary="",
+        verified_findings=[],
+        recent_messages=[],
+        turn_count=1,
+    )
     second = run_agent("这家公司十大股东是谁", session_id="TEST-GATE-5")
+    assert second.turn_id == 2
     assert second.parsed_request is not None
     assert second.parsed_request.entities == ["600519.SH"]
     assert second.tool_call_history and second.tool_call_history[0].tool_name == "ownership_analysis"

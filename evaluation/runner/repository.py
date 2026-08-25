@@ -148,12 +148,12 @@ def mark_case_completed(batch_id: str, case_id: str, run_id: str) -> None:
         """, (run_id, datetime.now(UTC).isoformat(), batch_id, case_id))
 
 
-def mark_case_failed(batch_id: str, case_id: str, message: str) -> None:
+def mark_case_failed(batch_id: str, case_id: str, message: str, run_id: str | None = None) -> None:
     with connect() as connection:
         connection.execute("""
-            UPDATE evaluation_cases SET status = 'failed', completed_at = ?, error_message = ?
+            UPDATE evaluation_cases SET status = 'failed', run_id = ?, completed_at = ?, error_message = ?
             WHERE batch_id = ? AND case_id = ?
-        """, (datetime.now(UTC).isoformat(), message[:2000], batch_id, case_id))
+        """, (run_id, datetime.now(UTC).isoformat(), message[:2000], batch_id, case_id))
 
 
 def refresh_batch_status(batch_id: str, *, update: bool = True) -> dict[str, Any]:

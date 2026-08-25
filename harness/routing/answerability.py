@@ -4,6 +4,7 @@ from __future__ import annotations
 from schemas.request import ParsedRequest, PreAnswerability
 
 from harness.routing.capability_registry import CAPABILITIES
+from harness.routing.entities import is_industry_topic_query
 
 UNSUPPORTED_FAMILIES = {
     "realtime_market_query": "现有数据不包含历史或实时行情。",
@@ -112,7 +113,11 @@ def _missing_slots(parsed: ParsedRequest) -> list[str]:
             missing.append("as_of_date")
         return missing
     if family == "document_retrieval":
-        return [] if parsed.entities or "公告" in parsed.raw_query or "研报" in parsed.raw_query else ["company_ids"]
+        return [] if (
+            parsed.entities
+            or is_industry_topic_query(parsed.raw_query)
+            or any(marker in parsed.raw_query for marker in ("公告", "研报", "研究报告"))
+        ) else ["company_ids"]
     if family == "event_query":
         return [] if parsed.entities else ["company_ids"]
     if family == "research_view_query":
@@ -121,7 +126,14 @@ def _missing_slots(parsed: ParsedRequest) -> list[str]:
 
 
 def _clarify(parsed: ParsedRequest, missing: list[str]) -> PreAnswerability:
-    questions = [SLOT_QUESTIONS.get(slot, f"缺少必要条件：{slot}") for slot in missing]
+    unresolved_companies = [
+        item.term for item in parsed.entity_candidates if item.status == "not_found"
+    ]
+    if "company_ids" in missing and unresolved_companies:
+        names = "、".join(dict.fromkeys(unresolved_companies))
+        questions = [f"未能将“{names}”匹配到本地上市公司，请提供证券代码或核对名称。"]
+    else:
+        questions = [SLOT_QUESTIONS.get(slot, f"缺少必要条件：{slot}") for slot in missing]
     return PreAnswerability(
         status="clarification_required",
         capability=parsed.task_family,

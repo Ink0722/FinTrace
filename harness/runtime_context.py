@@ -5,8 +5,10 @@ from schemas.agent_state import AgentState
 from schemas.evidence import Evidence
 
 from harness.routing.capability_registry import get_capability
+from tools.argument_validation import tool_argument_schema
 
 MAX_EVIDENCE_ITEMS = 12
+MAX_DOCUMENT_CHUNK_ITEMS = 4
 MAX_CHUNK_TEXT_CHARS = 500
 CAPABILITY_GAP_MESSAGES = {
     "realtime_market_data_unavailable": "当前数据不包含实时或历史行情，无法评价股价表现。",
@@ -17,7 +19,7 @@ CAPABILITY_GAP_MESSAGES = {
 
 def evidence_summary(state: AgentState, limit: int = MAX_EVIDENCE_ITEMS) -> list[dict]:
     summary: list[dict] = []
-    for item in state.evidence_ledger[:limit]:
+    for item in _select_evidence_items(state.evidence_ledger, limit=limit):
         fact = dict(item.fact)
         text = fact.get("text")
         if isinstance(text, str) and len(text) > MAX_CHUNK_TEXT_CHARS:
@@ -28,10 +30,21 @@ def evidence_summary(state: AgentState, limit: int = MAX_EVIDENCE_ITEMS) -> list
                 "evidence_type": item.evidence_type,
                 "company_id": item.source.company_id,
                 "document_type": item.source.document_type,
+                "support_level": item.support_level,
                 "fact": fact,
             }
         )
     return summary
+
+
+def _select_evidence_items(items: list[Evidence], *, limit: int) -> list[Evidence]:
+    """Reserve runtime context for structured evidence while bounding document text."""
+    document_items = [item for item in items if item.evidence_type == "document_chunk"]
+    structured_items = [item for item in items if item.evidence_type != "document_chunk"]
+    selected_documents = document_items[:MAX_DOCUMENT_CHUNK_ITEMS]
+    selected_structured = structured_items[: max(0, limit - len(selected_documents))]
+    selected_ids = {id(item) for item in [*selected_structured, *selected_documents]}
+    return [item for item in items if id(item) in selected_ids][:limit]
 
 
 def capability_descriptors(names: list[str]) -> list[dict]:
@@ -88,7 +101,7 @@ def repair_runtime(state: AgentState, errors: list[str]) -> dict:
         "failed_action": action.model_dump() if action else None,
         "validator_error": errors,
         "capability_definition": capability.model_dump() if capability else None,
-        "tool_schema": {},
+        "tool_schema": tool_argument_schema(action.tool_name, action.operation) if action else {},
         "repair_budget": {"used": state.repair_count, "max": 1},
     }
 

@@ -6,6 +6,7 @@ import re
 from schemas.agent_state import AgentState
 from schemas.request import AgentAction
 from tools.entity_resolver import EntityResolver
+from tools.argument_validation import allowed_argument_fields, validate_tool_arguments
 
 from harness.routing.capability_registry import get_capability
 
@@ -37,6 +38,11 @@ def validate_action(action: AgentAction, state: AgentState, resolver: EntityReso
     if "knowledge_cutoff" in arguments:
         errors.append("planner must not set knowledge_cutoff; it is injected by the workflow")
 
+    if action.capability == "research_view_query":
+        parsed_claim_types = arguments.pop("research_claim_types", None)
+        if parsed_claim_types and not arguments.get("claim_types"):
+            arguments["claim_types"] = parsed_claim_types
+
     if action.capability == "document_retrieval" and state.parsed_request:
         if not arguments.get("company_ids") and len(state.parsed_request.entities) == 1:
             arguments["company_ids"] = list(state.parsed_request.entities)
@@ -57,6 +63,12 @@ def validate_action(action: AgentAction, state: AgentState, resolver: EntityReso
                     normalized.append(canonical)
             if normalized and len(normalized) == len(company_ids):
                 arguments["company_ids"] = normalized
+                company_ids = normalized
+
+        if state.parsed_request and company_ids:
+            parsed_company_ids = set(state.parsed_request.entities)
+            if not parsed_company_ids or not set(company_ids).issubset(parsed_company_ids):
+                errors.append("company_ids must come from the current parsed request")
 
     if action.capability == "financial_metric_compare":
         n_companies = len(arguments.get("company_ids") or [])
@@ -114,6 +126,23 @@ def validate_action(action: AgentAction, state: AgentState, resolver: EntityReso
         elif not arguments.get(slot):
             errors.append(f"missing required argument: {slot}")
 
+    if not errors:
+        effective_arguments = dict(arguments)
+        if action.tool_name in {"financial_analysis", "ownership_analysis", "event_timeline", "research_analysis"}:
+            effective_arguments.setdefault("operation", action.operation)
+        if state.knowledge_cutoff and capability.supports_knowledge_cutoff:
+            effective_arguments.setdefault("knowledge_cutoff", state.knowledge_cutoff)
+        preflight = validate_tool_arguments(
+            action.tool_name or "", action.operation or "", effective_arguments,
+        )
+        if preflight.errors:
+            errors.extend(preflight.errors)
+        elif preflight.normalized_arguments is not None:
+            normalized = dict(preflight.normalized_arguments)
+            normalized.pop("knowledge_cutoff", None)
+            arguments.clear()
+            arguments.update(normalized)
+
     if _is_duplicate(action, state):
         errors.append("duplicate tool call with identical arguments and no information gain")
     return errors
@@ -133,6 +162,14 @@ def repair_action(action: AgentAction, errors: list[str], state: AgentState) -> 
         candidate = [company for company in known if company not in arguments.get("company_ids", [])]
         if arguments.get("company_ids") and candidate:
             arguments["company_ids"] = [arguments["company_ids"][0]]
+            repaired = True
+
+    if any("extra inputs are not permitted" in error.lower() for error in errors):
+        allowed = allowed_argument_fields(action.tool_name, action.operation)
+        extra_fields = set(arguments) - allowed
+        if extra_fields:
+            for field in extra_fields:
+                arguments.pop(field, None)
             repaired = True
 
     if not repaired:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from harness.memory.manager import prepare_session_memory, select_relevant_findings, update_verified_findings
+from harness.graph.nodes import persist_session_node
 from harness.runtime_context import planner_runtime
 from schemas.agent_state import AgentState, Message, UserRequest
 from schemas.enums import ToolName, ToolStatus
@@ -13,7 +14,7 @@ from schemas.tool_results import ToolResult
 def _record(status: str = "success") -> LlmCallRecord:
     return LlmCallRecord(
         prompt_id="fintrace.memory_summarizer",
-        prompt_version="1.0.0",
+        prompt_version="1.1.0",
         model="test-model",
         input_hash="abc",
         output_schema="MemoryUpdate",
@@ -82,6 +83,25 @@ def test_memory_summary_is_deferred_after_an_earlier_llm_failure() -> None:
     assert any("延后会话摘要" in warning for warning in state.warnings)
 
 
+def test_failed_turn_does_not_persist_session_memory(monkeypatch) -> None:
+    state = _state([Message(role="user", content="问题")])
+    state.answer_status = "failed"
+    state.workflow_status = "llm_failed"
+
+    monkeypatch.setattr(
+        "harness.graph.nodes.prepare_session_memory",
+        lambda *_: (_ for _ in ()).throw(AssertionError("memory preparation must be skipped")),
+    )
+    monkeypatch.setattr(
+        "harness.graph.nodes.SessionStore",
+        lambda: (_ for _ in ()).throw(AssertionError("session store must not be opened")),
+    )
+
+    persist_session_node(state)
+
+    assert state.executed_nodes[-1] == "persist_session"
+
+
 def test_verified_findings_are_derived_from_evidence_and_deduplicated() -> None:
     evidence = Evidence(
         evidence_id="FIN-E1",
@@ -105,6 +125,39 @@ def test_verified_findings_are_derived_from_evidence_and_deduplicated() -> None:
     assert finding.evidence_ids == ["FIN-E1"]
     assert finding.company_id == "600519.SH"
     assert finding.source_tool == "financial_analysis"
+
+
+def test_weak_evidence_is_not_written_to_verified_findings() -> None:
+    evidence = Evidence(
+        evidence_id="WEAK-E1",
+        evidence_type="document_chunk",
+        source={"company_id": "600519.SH"},
+        fact={"text": "仅为弱匹配文本"},
+        support_level="weak",
+    )
+    result = ToolResult(
+        tool_call_id="CALL-WEAK",
+        tool_name=ToolName.DOCUMENT_SEARCH,
+        status=ToolStatus.SUCCESS,
+        evidence=[evidence],
+    )
+    parsed = ParsedRequest(raw_query="q", entities=["600519.SH"], task_family="document_retrieval")
+
+    findings = update_verified_findings([], [evidence], parsed=parsed, tool_results=[result], turn_id=2)
+
+    assert findings == []
+
+
+def test_memory_summary_has_a_two_thousand_character_hard_limit() -> None:
+    messages = [Message(role="user", content=f"消息{i}") for i in range(10)]
+    state = _state(messages, turn_id=6)
+
+    prepare_session_memory(
+        state,
+        skill_runner=lambda *args: (MemoryUpdate(summary="长" * 2_500), _record()),
+    )
+
+    assert len(state.conversation_summary) == 2_000
 
 
 def test_relevant_findings_require_matching_company_and_prefer_task_topic() -> None:

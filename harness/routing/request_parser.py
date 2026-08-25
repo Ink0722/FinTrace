@@ -12,6 +12,7 @@ from harness.routing.entities import (
     extract_entities,
     extract_event_types,
     extract_focus_topics,
+    is_industry_topic_query,
 )
 from harness.routing.time_resolver import resolve_time
 
@@ -35,12 +36,19 @@ DEFAULT_METRICS = ["REVENUE", "NET_PROFIT_PARENT", "OPERATING_CASHFLOW"]
 EXPLANATION_MARKERS = ("为什么", "原因", "如何", "怎么看", "意味着", "是否异常", "合理吗", "背后")
 INVESTIGATION_MARKERS = ("分析", "调查", "排查", "诊断", "综合", "尽调", "风险画像", "结合", "并评估", "研判")
 COMPARE_MARKERS = ("变化", "比较", "对比", "同比增长", "同比下降", "趋势", "涨了", "跌了", "增长多少", "下降多少", "变动")
-REALTIME_MARKERS = ("股价", "市值", "行情", "涨跌幅", "K线", "盘口", "实时", "今日净值", "现价")
-PREDICTION_MARKERS = ("会涨", "会跌", "能涨", "目标价是多少", "值不值得买", "买入建议", "预测未来", "明年会")
+REALTIME_MARKERS = (
+    "股价", "市值", "行情", "涨跌幅", "K线", "盘口", "实时", "今日净值", "现价",
+    "涨停", "跌停", "大盘", "自选股", "涨最多", "跌最狠",
+)
+PREDICTION_MARKERS = (
+    "会涨", "会跌", "能涨", "目标价是多少", "值不值得买", "买入建议", "预测未来", "明年会",
+    "还能买吗", "能买吗", "可以买", "该不该买", "要不要买", "要不要卖",
+)
 USER_ACCOUNT_MARKERS = ("银行卡", "账户权限", "交易权限", "开户", "销户", "修改密码", "持仓账户")
-RESEARCH_MARKERS = ("机构", "券商", "分析师", "研报", "评级", "目标价", "盈利预测", "风险提示")
-RESEARCH_DETAIL_MARKERS = ("原文", "出处", "依据", "理由", "为什么", "详细", "具体怎么说")
+RESEARCH_MARKERS = ("机构", "券商", "分析师", "研报", "研究报告", "机构研究", "评级", "目标价", "盈利预测", "风险提示")
+RESEARCH_DETAIL_MARKERS = ("原文", "出处", "依据", "理由", "为什么", "详细", "具体怎么说", "内容")
 FINANCIAL_RISK_MARKERS = ("金融风险", "财务风险", "风险评估", "风险分析", "财务排雷", "风险扫描")
+COMPANY_NEWS_MARKERS = ("最新动态", "近期动态", "市场动态", "重要消息", "近期新闻", "最新消息")
 INSTITUTION_PATTERN = re.compile(r"([\u4e00-\u9fff]{2,12}(?:证券|研究所|基金))")
 VALID_FOCUS_TOPICS = {"asset_quality", "earnings_quality", "profitability", "solvency"}
 FOCUS_TOPIC_ALIASES = {
@@ -62,14 +70,19 @@ def parse_request(
     resolver = resolver or EntityResolver()
     extraction = extract_entities(query, resolver, current_context)
     time = resolve_time(query, knowledge_cutoff)
+    institutions, institution_company_ids = _infer_institutions(query, resolver)
+    target_company_ids = [
+        company_id for company_id in extraction.company_ids
+        if company_id not in institution_company_ids
+    ]
 
     parsed = ParsedRequest(
         raw_query=query,
-        entities=extraction.company_ids,
+        entities=target_company_ids,
         entity_candidates=[
             EntityCandidate(term=item["term"], company_ids=[c["company_id"] for c in item["candidates"] if c.get("company_id")], status="ambiguous")
             for item in extraction.ambiguous
-        ],
+        ] + [EntityCandidate(term=term, status="not_found") for term in extraction.unresolved_terms],
         people=extraction.holder_names,
         periods=time.periods,
         requested_periods=time.periods,
@@ -82,10 +95,10 @@ def parse_request(
         document_types=extract_document_types(query),
         event_types=extract_event_types(query),
         research_claim_types=_infer_research_claim_types(query),
-        institutions=list(dict.fromkeys(INSTITUTION_PATTERN.findall(query))),
+        institutions=institutions,
         requires_explanation=any(marker in query for marker in EXPLANATION_MARKERS),
-        requires_realtime=any(marker in query for marker in REALTIME_MARKERS),
-        requires_prediction=any(marker in query for marker in PREDICTION_MARKERS),
+        requires_realtime=_requires_realtime_data(query),
+        requires_prediction=_requires_prediction(query),
         parsed_by="rule",
     )
     if extraction.unresolved_terms:
@@ -94,6 +107,10 @@ def parse_request(
         parsed.unresolved_references.extend(time.unresolved)
 
     parsed.task_family = _infer_task_family(parsed, query)
+    if parsed.task_family == "research_view_query":
+        # “如何评价/怎么看” asks for the attributed view itself. Only explicit
+        # requests for reasons or source context should enter investigation mode.
+        parsed.requires_explanation = False
     if parsed.task_family == "user_account_query":
         # Account terms such as “银行卡” may contain company-name substrings.
         # They are irrelevant to this task and must not pollute financial context.
@@ -110,6 +127,10 @@ def parse_request(
         llm_parsed = llm_fallback(query, current_context, parsed)
         if llm_parsed is not None:
             _merge_llm_result(parsed, llm_parsed, resolver)
+            parsed.institutions = [
+                institution for institution in parsed.institutions
+                if _has_institution_role(query, institution)
+            ]
 
     if parsed.entities and not parsed.periods and parsed.task_family in {
         "financial_metric_query",
@@ -131,9 +152,11 @@ def parse_request(
 
 def _infer_task_family(parsed: ParsedRequest, query: str) -> str:
     has_user_account = any(marker in query for marker in USER_ACCOUNT_MARKERS)
-    has_research = any(marker in query for marker in RESEARCH_MARKERS)
+    has_research = bool(parsed.institutions) or any(marker in query for marker in RESEARCH_MARKERS)
     has_ownership = any(word in query for word in ("股东", "持股", "十大", "实控人", "减持", "增持", "质押"))
-    has_document = any(word in query for word in ("公告", "问询函", "年报", "研报", "原文", "披露", "检索", "查找", "找出"))
+    has_document = bool(parsed.document_types) or any(
+        word in query for word in ("公告", "问询函", "财务报告", "季度报告", "研报", "研究报告", "原文", "披露", "检索", "查找", "找出")
+    )
     has_event = any(word in query for word in ("事件", "时间线", "处罚", "立案", "违规记录", "警示函", "经过"))
     has_metric = bool(parsed.metrics)
     has_financial_risk = any(marker in query for marker in FINANCIAL_RISK_MARKERS)
@@ -141,15 +164,18 @@ def _infer_task_family(parsed: ParsedRequest, query: str) -> str:
 
     if has_user_account and not has_supported_domain:
         return "user_account_query"
+    if parsed.requires_realtime and not has_supported_domain:
+        return "realtime_market_query"
+    if parsed.requires_prediction and not has_supported_domain:
+        return "prediction_request"
+    if is_industry_topic_query(query) and not parsed.entities and not parsed.unresolved_references:
+        return "document_retrieval"
     if has_research and any(marker in query for marker in RESEARCH_DETAIL_MARKERS):
         if any(marker in query for marker in ("找", "查找", "检索")) and "观点" not in query:
             return "document_retrieval"
         return "research_investigation"
     if has_research:
         return "research_view_query"
-    if parsed.requires_prediction and parsed.entities:
-        return "financial_investigation"
-
     if "穿透" in query:
         return "ownership_penetration"
     if has_ownership and any(word in query for word in ("变化", "减持", "增持", "进入", "退出", "比较")):
@@ -160,6 +186,8 @@ def _infer_task_family(parsed: ParsedRequest, query: str) -> str:
         return "event_investigation"
     if has_event:
         return "event_query"
+    if parsed.entities and _is_company_news_query(query):
+        return "event_investigation"
     if has_financial_risk:
         return "financial_investigation"
     if has_document and not has_metric:
@@ -177,6 +205,29 @@ def _infer_task_family(parsed: ParsedRequest, query: str) -> str:
     if parsed.requires_prediction:
         return "prediction_request"
     return "unknown"
+
+
+def _requires_realtime_data(query: str) -> bool:
+    if any(marker in query for marker in REALTIME_MARKERS):
+        return True
+    if any(marker in query for marker in ("经营表现", "财务表现", "业绩表现")):
+        return False
+    return bool(re.search(
+        r"(?:今天|今日|近期|最近).{0,10}(?:走势|涨跌|涨幅|跌幅|市场表现|表现(?:怎么样|如何))",
+        query,
+    ))
+
+
+def _is_company_news_query(query: str) -> bool:
+    if any(marker in query for marker in COMPANY_NEWS_MARKERS):
+        return True
+    return bool(re.search(r"(?:近期|最近|最新).{0,8}(?:动态|消息|新闻)", query))
+
+
+def _requires_prediction(query: str) -> bool:
+    if any(marker in query for marker in PREDICTION_MARKERS):
+        return True
+    return bool(re.search(r"(?:还能|是否|可不可以|能不能).{0,6}(?:买|卖)(?:吗|呢|？|\?)?", query))
 
 
 def _infer_capability_gaps(parsed: ParsedRequest) -> list[str]:
@@ -222,6 +273,30 @@ def _infer_research_claim_types(query: str) -> list[str]:
     return values
 
 
+def _infer_institutions(query: str, resolver: EntityResolver) -> tuple[list[str], set[str]]:
+    """Separate a research publisher from a listed company that is the query target."""
+    institutions: list[str] = []
+    company_ids: set[str] = set()
+    for name in dict.fromkeys(INSTITUTION_PATTERN.findall(query)):
+        if not _has_institution_role(query, name):
+            continue
+        institutions.append(name)
+        resolution = resolver.resolve_company(name)
+        if resolution.status == "resolved" and resolution.company_id:
+            company_ids.add(resolution.company_id)
+    return institutions, company_ids
+
+
+def _has_institution_role(query: str, name: str) -> bool:
+    escaped = re.escape(name)
+    patterns = (
+        rf"(?:根据|按照|引用|来自)\s*{escaped}",
+        rf"{escaped}(?:发布|出具|撰写|覆盖|发表)?(?:的)?(?:研报|研究报告|观点|预测|判断|分析师观点)",
+        rf"{escaped}(?:认为|指出|预计|给予|维持|上调|下调|如何评价|如何看待|怎么看|对)",
+    )
+    return any(re.search(pattern, query) for pattern in patterns)
+
+
 def _merge_llm_result(parsed: ParsedRequest, llm_parsed: ParsedRequest, resolver: EntityResolver) -> None:
     """LLM output wins for semantics; deterministic entity resolution stays authoritative."""
     parsed.task_family = llm_parsed.task_family if llm_parsed.task_family != "unknown" else parsed.task_family
@@ -244,11 +319,19 @@ def _merge_llm_result(parsed: ParsedRequest, llm_parsed: ParsedRequest, resolver
     parsed.parsed_by = "llm"
     # Entities from the LLM are still re-resolved through the alias index; never trusted blindly.
     for term in llm_parsed.entities:
-        if term in parsed.entities:
-            continue
         resolution = resolver.resolve_company(term)
-        if resolution.status == "resolved" and resolution.company_id:
+        if (
+            resolution.status == "resolved"
+            and resolution.company_id
+            and resolution.company_id not in parsed.entities
+        ):
             parsed.entities.append(resolution.company_id)
+        elif resolution.status == "not_found":
+            if not any(item.term == term for item in parsed.entity_candidates):
+                parsed.entity_candidates.append(EntityCandidate(term=term, status="not_found"))
+            if term not in parsed.unresolved_references:
+                parsed.unresolved_references.append(term)
+    parsed.entities = list(dict.fromkeys(parsed.entities))
 
 
 def _normalize_focus_topics(values: list[str]) -> list[str]:

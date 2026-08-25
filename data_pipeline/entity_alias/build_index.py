@@ -33,6 +33,7 @@ CREATE INDEX idx_aliases_company ON aliases(company_id);
 """
 
 SOURCES_SPEC = {
+    "company_profiles": ("data/source/company_profiles/akshare_company_profiles.jsonl", "company_profile"),
     "research_reports": ("data/normalized/research_reports.jsonl", "research"),
     "announcements": ("data/normalized/announcements.jsonl", "announcement"),
     "financial_metrics": ("data/indexes/financial_analysis/financial_metrics.sqlite", "financial"),
@@ -59,7 +60,12 @@ def build_alias_index(data_root: Path, output_path: Path) -> dict:
     companies: dict[str, dict] = {}
     aliases: dict[tuple[str, str], tuple[str, str]] = {}
 
-    report = _load_research_reports(data_root / "normalized" / "research_reports.jsonl", companies, aliases)
+    report = _load_company_profiles(
+        data_root / "source" / "company_profiles" / "akshare_company_profiles.jsonl",
+        companies,
+        aliases,
+    )
+    report.update(_load_research_reports(data_root / "normalized" / "research_reports.jsonl", companies, aliases))
     report.update(_load_announcements(data_root / "normalized" / "announcements.jsonl", companies, aliases))
     report.update(_load_company_ids_from_sqlite(data_root / "indexes" / "financial_analysis" / "financial_metrics.sqlite", "financial", companies))
     report.update(_load_company_ids_from_sqlite(data_root / "indexes" / "ownership_analysis" / "ownership_holdings.sqlite", "ownership", companies))
@@ -100,6 +106,48 @@ def build_alias_index(data_root: Path, output_path: Path) -> dict:
         "sources": report,
         "elapsed_ms": round((time.perf_counter() - started) * 1000),
     }
+
+
+def _load_company_profiles(path: Path, companies: dict, aliases: dict) -> dict:
+    """Load authoritative short, legal and former names from successful local profile records."""
+    if not path.is_file():
+        return {"company_profiles": "skipped_missing"}
+
+    rows = 0
+    alias_count = 0
+    with path.open("r", encoding="utf-8-sig") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("fetch_status") != "success":
+                continue
+            company_id = canonical_company_id(str(row.get("company_id") or "").strip())
+            security_name = str(row.get("security_name") or "").strip()
+            legal_name = str(row.get("legal_name") or "").strip()
+            if not company_id or not (security_name or legal_name):
+                continue
+
+            canonical_name = security_name or legal_name
+            _register(companies, aliases, company_id, canonical_name, "company_profile")
+            alias_count += 1
+            for name in _profile_aliases(row, legal_name):
+                if name == canonical_name:
+                    continue
+                _register_alias(aliases, name, company_id, "company_profile")
+                alias_count += 1
+            rows += 1
+    return {"company_profiles": rows, "company_profile_aliases": alias_count}
+
+
+def _profile_aliases(row: dict, legal_name: str) -> list[str]:
+    names = [legal_name] if legal_name else []
+    former_names = row.get("former_names") or []
+    if isinstance(former_names, str):
+        former_names = [item.strip() for item in former_names.replace("；", ";").split(";")]
+    if isinstance(former_names, list):
+        names.extend(str(item).strip() for item in former_names)
+    return list(dict.fromkeys(name for name in names if name))
 
 
 def _load_research_reports(path: Path, companies: dict, aliases: dict) -> dict:
