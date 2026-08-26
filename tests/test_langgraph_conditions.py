@@ -26,10 +26,14 @@ def test_realtime_request_refused() -> None:
 
 
 def test_obvious_market_boundary_skips_all_llm_calls() -> None:
-    state = run_agent("今天有哪些龙虎榜和主力资金净流入股票", session_id="TEST-GATE-MARKET")
-    assert state.answer_status == "unsupported"
-    assert state.tool_call_history == []
-    assert state.llm_calls == []
+    for index, question in enumerate((
+        "今天有哪些龙虎榜和主力资金净流入股票",
+        "告诉我今天市场整体状况如何？",
+    )):
+        state = run_agent(question, session_id=f"TEST-GATE-MARKET-{index}")
+        assert state.answer_status == "unsupported"
+        assert state.tool_call_history == []
+        assert state.llm_calls == []
 
 
 def test_market_technical_boundary_skips_tools_and_llm_calls() -> None:

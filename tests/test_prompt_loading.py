@@ -198,7 +198,7 @@ def test_final_answer_retries_semantically_truncated_json() -> None:
 
         def chat_json(self, messages, temperature=0.0):
             self.calls += 1
-            answer = "机构观点显示需求" if self.calls == 1 else "机构观点显示相关产品需求增长。"
+            answer = "机构观点显示，主要包括：" if self.calls == 1 else "机构观点显示相关产品需求增长。"
             return {
                 "choices": [{"message": {"content": '{"answer":"' + answer + '","used_evidence_ids":["E1"],"limitations_disclosed":[]}'}, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 12, "completion_tokens": 8},
@@ -221,6 +221,38 @@ def test_final_answer_retries_semantically_truncated_json() -> None:
     assert record.attempt_count == 2
     assert record.prompt_tokens == 12
     assert record.completion_tokens == 8
+
+
+def test_final_answer_accepts_complete_text_without_terminal_punctuation() -> None:
+    from harness.llm import QwenClient
+
+    class FakeClient(QwenClient):
+        def __init__(self):
+            super().__init__(api_key="test-key")
+            self.calls = 0
+
+        def chat_json(self, messages, temperature=0.0):
+            self.calls += 1
+            return {
+                "choices": [{"message": {"content": '{"answer":"机构观点显示相关产品需求增长","used_evidence_ids":["E1"],"limitations_disclosed":[]}'}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 8},
+            }
+
+    client = FakeClient()
+    output, record = run_skill(
+        "final_answer",
+        {
+            "answer_status": "answered",
+            "supporting_evidence": [{"evidence_id": "E1"}],
+            "limitations": [],
+        },
+        client=client,
+    )
+
+    assert isinstance(output, FinalAnswer)
+    assert output.answer == "机构观点显示相关产品需求增长"
+    assert client.calls == 1
+    assert record.status == "success"
 
 
 def test_final_answer_records_length_truncation_failure() -> None:

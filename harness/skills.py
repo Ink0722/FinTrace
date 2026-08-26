@@ -178,14 +178,14 @@ def _validate_output_semantics(skill: str, output: BaseModel, runtime_context: d
 def _looks_complete(answer: str) -> bool:
     stripped = answer.rstrip()
     incomplete_suffixes = (
-        "及", "和", "与", "或", "但", "并", "且", "为", "在", "对", "从", "由", "维持",
-        "包括", "例如", "主要", "需求", "达到", "同比", "环比", "%", "：", ":", ",", "，",
+        "包括：", "包括:", "例如：", "例如:", "具体如下：", "具体如下:",
+        "分别为：", "分别为:", "主要有：", "主要有:", "：", ":", ",", "，", "、",
     )
     if stripped.endswith(incomplete_suffixes):
         return False
     if stripped.count("**") % 2 or stripped.count("```") % 2:
         return False
-    return stripped.endswith(("。", "！", "？", ".", "!", "?", "；", ";", "）", ")", "】", "]", "”", '"'))
+    return True
 
 
 def _emit_validated_answer(output: BaseModel) -> None:

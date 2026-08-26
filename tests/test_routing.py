@@ -94,10 +94,14 @@ def test_broad_market_and_industry_news_route_without_company() -> None:
 def test_recent_market_performance_is_realtime_but_financial_performance_is_not() -> None:
     market = parse_request("证券最近表现如何", resolver=RESOLVER)
     overall = parse_request("今天市场整体表现如何？", resolver=RESOLVER)
+    overall_status = parse_request("告诉我今天市场整体状况如何？", resolver=RESOLVER)
     financial = parse_request("贵州茅台近期财务表现如何", resolver=RESOLVER)
 
     assert market.task_family == "realtime_market_query"
     assert overall.task_family == "realtime_market_query"
+    assert overall_status.task_family == "realtime_market_query"
+    assert overall_status.requires_realtime
+    assert check_answerability(overall_status).status == "unsupported"
     assert financial.task_family != "realtime_market_query"
 
 

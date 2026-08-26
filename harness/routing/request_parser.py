@@ -230,10 +230,17 @@ def _requires_realtime_data(query: str) -> bool:
         return True
     if any(marker in query for marker in ("经营表现", "财务表现", "业绩表现")):
         return False
-    return bool(re.search(
-        r"(?:今天|今日|近期|最近).{0,10}(?:走势|涨跌|涨幅|跌幅|市场表现|表现(?:怎么样|如何))",
-        query,
-    ))
+    return bool(
+        re.search(
+            r"(?:今天|今日|近期|最近).{0,10}(?:走势|涨跌|涨幅|跌幅|市场表现|表现(?:怎么样|如何))",
+            query,
+        )
+        or re.search(
+            r"(?:今天|今日|当前|现在).{0,8}(?:市场整体|整体市场|市场|大盘).{0,8}"
+            r"(?:状况|情况|概况|表现|走势)(?:怎么样|如何|是什么)?",
+            query,
+        )
+    )
 
 
 def _is_company_news_query(query: str) -> bool:
