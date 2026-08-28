@@ -66,6 +66,7 @@ def row_to_dict(row: sqlite3.Row) -> dict:
 
 
 def validate_snapshot(index_path: Path, research_path: Path, chunks_path: Path) -> list[str]:
+    del research_path, chunks_path  # Sources remain recorded for offline audit only.
     manifest_path = index_path.with_name("manifest.json")
     if not manifest_path.is_file():
         return [f"Research index manifest not found: {manifest_path}"]
@@ -76,14 +77,8 @@ def validate_snapshot(index_path: Path, research_path: Path, chunks_path: Path) 
     errors = []
     if manifest.get("mapping_version") != RESEARCH_MAPPING_VERSION:
         errors.append(f"mapping version mismatch: index={manifest.get('mapping_version')}, expected={RESEARCH_MAPPING_VERSION}")
-    for name, path in (("research_reports", research_path), ("chunks", chunks_path)):
+    for name in ("research_reports", "chunks"):
         recorded = (manifest.get("sources") or {}).get(name)
-        if not path.is_file():
-            errors.append(f"source not found: {path}")
-        elif not isinstance(recorded, dict):
+        if not isinstance(recorded, dict):
             errors.append(f"manifest source missing: {name}")
-        else:
-            stat = path.stat()
-            if recorded.get("size") != stat.st_size or recorded.get("mtime_ns") != stat.st_mtime_ns:
-                errors.append(f"source changed: {path}")
     return errors

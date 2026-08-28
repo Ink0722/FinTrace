@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from app.api.main import ChatRequest, _claim_chat_session
 from harness.tracing.users import (
     claim_session, create_user, delete_session, delete_user, get_user_session_detail,
-    list_user_sessions, list_users, rename_session, update_user,
+    list_user_sessions, list_users, rename_session, set_session_immutable, update_user,
 )
 from harness.tracing.store import connect, import_payload
 
@@ -150,3 +150,21 @@ def test_session_summary_is_lightweight_and_detail_restores_trace(monkeypatch, t
     with pytest.raises(PermissionError):
         get_user_session_detail(other["user_id"], "SESSION-RICH")
     assert get_user_session_detail(owner["user_id"], "MISSING") is None
+
+
+def test_immutable_session_is_read_only(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("FINTRACE_RUNTIME_DB", str(tmp_path / "immutable.sqlite3"))
+    owner = create_user("展示用户")
+    claim_session(owner["user_id"], "SESSION-READONLY", "最终评测")
+    assert set_session_immutable(owner["user_id"], "SESSION-READONLY")
+
+    summary = list_user_sessions(owner["user_id"])[0]
+    detail = get_user_session_detail(owner["user_id"], "SESSION-READONLY")
+    assert summary["immutable"] == 1
+    assert detail["immutable"] == 1
+    with pytest.raises(PermissionError):
+        claim_session(owner["user_id"], "SESSION-READONLY", "继续提问")
+    with pytest.raises(PermissionError):
+        rename_session(owner["user_id"], "SESSION-READONLY", "新标题")
+    with pytest.raises(PermissionError):
+        delete_session(owner["user_id"], "SESSION-READONLY")

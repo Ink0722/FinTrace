@@ -1,21 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
+import { backendHeaders, backendUrl } from "@/lib/backend-proxy";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
-  const backend = process.env.FINTRACE_API_BASE_URL ?? "http://127.0.0.1:8000";
   let body: unknown;
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ detail: "请求体必须是 JSON。" }, { status: 400 });
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ detail: "请求体必须是 JSON 对象。" }, { status: 400 });
+  }
   try {
-    const response = await fetch(`${backend.replace(/\/$/, "")}/chat`, {
+    const response = await fetch(backendUrl("/chat"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      headers: backendHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ ...body, user_id: "USER-SHOWCASE" }),
       cache: "no-store",
       signal: request.signal,
     });

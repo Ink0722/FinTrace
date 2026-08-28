@@ -8,6 +8,10 @@ from uuid import uuid4
 from harness.tracing.store import DEFAULT_USER_ID, connect
 
 
+class ReadOnlySessionError(PermissionError):
+    """Raised when a mutation targets an immutable showcase session."""
+
+
 def list_users() -> list[dict]:
     with connect() as connection:
         return [dict(row) for row in connection.execute(
@@ -84,12 +88,14 @@ def delete_session(user_id: str, session_id: str) -> bool:
     """Delete one owned session and all of its persisted runtime records."""
     with connect() as connection:
         owner = connection.execute(
-            "SELECT user_id FROM user_sessions WHERE session_id = ?", (session_id,),
+            "SELECT user_id, immutable FROM user_sessions WHERE session_id = ?", (session_id,),
         ).fetchone()
         if owner is None:
             return False
         if owner["user_id"] != user_id:
             raise PermissionError("Session belongs to another local user")
+        if owner["immutable"]:
+            raise ReadOnlySessionError("Read-only showcase sessions cannot be deleted")
 
         # Child trace records cascade from agent_runs. Keep all three roots in
         # this transaction so a session cannot be left partially visible.
@@ -112,18 +118,20 @@ def rename_session(user_id: str, session_id: str, title: str) -> dict | None:
         raise ValueError("Session title cannot be empty")
     with connect() as connection:
         owner = connection.execute(
-            "SELECT user_id FROM user_sessions WHERE session_id = ?", (session_id,),
+            "SELECT user_id, immutable FROM user_sessions WHERE session_id = ?", (session_id,),
         ).fetchone()
         if owner is None:
             return None
         if owner["user_id"] != user_id:
             raise PermissionError("Session belongs to another local user")
+        if owner["immutable"]:
+            raise ReadOnlySessionError("Read-only showcase sessions cannot be renamed")
         connection.execute(
             "UPDATE user_sessions SET title = ? WHERE user_id = ? AND session_id = ?",
             (cleaned[:80], user_id, session_id),
         )
         row = connection.execute(
-            "SELECT session_id, title, created_at, updated_at FROM user_sessions "
+            "SELECT session_id, title, created_at, updated_at, immutable FROM user_sessions "
             "WHERE user_id = ? AND session_id = ?",
             (user_id, session_id),
         ).fetchone()
@@ -136,12 +144,16 @@ def claim_session(user_id: str, session_id: str, title: str = "新会话") -> No
         if connection.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,)).fetchone() is None:
             raise LookupError("User not found")
         owner = connection.execute(
-            "SELECT user_id FROM user_sessions WHERE session_id = ?", (session_id,),
+            "SELECT user_id, immutable FROM user_sessions WHERE session_id = ?", (session_id,),
         ).fetchone()
         if owner and owner["user_id"] != user_id:
             raise PermissionError("Session belongs to another local user")
+        if owner and owner["immutable"]:
+            raise ReadOnlySessionError("Read-only showcase sessions cannot accept new messages")
         connection.execute(
-            "INSERT OR IGNORE INTO user_sessions VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO user_sessions("
+            "session_id, user_id, title, created_at, updated_at, immutable"
+            ") VALUES (?, ?, ?, ?, ?, 0)",
             (session_id, user_id, title[:80] or "新会话", now, now),
         )
 
@@ -149,7 +161,7 @@ def claim_session(user_id: str, session_id: str, title: str = "新会话") -> No
 def list_user_sessions(user_id: str) -> list[dict]:
     with connect() as connection:
         sessions = [dict(row) for row in connection.execute("""
-            SELECT us.session_id, us.title, us.created_at, us.updated_at,
+            SELECT us.session_id, us.title, us.created_at, us.updated_at, us.immutable,
                    COUNT(ar.run_id) AS turn_count,
                    COALESCE((
                        SELECT answer FROM agent_runs latest
@@ -161,7 +173,7 @@ def list_user_sessions(user_id: str) -> list[dict]:
               LEFT JOIN agent_runs ar
                 ON ar.user_id = us.user_id AND ar.session_id = us.session_id
              WHERE us.user_id = ?
-             GROUP BY us.session_id, us.title, us.created_at, us.updated_at
+             GROUP BY us.session_id, us.title, us.created_at, us.updated_at, us.immutable
              ORDER BY us.updated_at DESC
         """, (user_id,))]
         return sessions
@@ -180,7 +192,7 @@ def get_user_session_detail(
         if owner["user_id"] != user_id:
             raise PermissionError("Session belongs to another local user")
         session = connection.execute(
-            "SELECT session_id, title, created_at, updated_at FROM user_sessions "
+            "SELECT session_id, title, created_at, updated_at, immutable FROM user_sessions "
             "WHERE user_id = ? AND session_id = ?",
             (user_id, session_id),
         ).fetchone()
@@ -212,6 +224,16 @@ def get_user_session_detail(
             **dict(session), "runs": runs, "has_more": has_more,
             "oldest_turn": runs[0]["turn_id"] if runs else None,
         }
+
+
+def set_session_immutable(user_id: str, session_id: str, immutable: bool = True) -> bool:
+    """Mark a session read-only without changing its title or activity timestamp."""
+    with connect() as connection:
+        cursor = connection.execute(
+            "UPDATE user_sessions SET immutable = ? WHERE user_id = ? AND session_id = ?",
+            (int(immutable), user_id, session_id),
+        )
+        return cursor.rowcount > 0
 
 
 def _session_children(connection, run_ids: list[str]) -> dict[str, dict[str, list[dict]]]:

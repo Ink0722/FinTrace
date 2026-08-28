@@ -1,0 +1,18 @@
+[Unit]
+Description=FinTrace internal API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fintrace
+Group=fintrace
+WorkingDirectory=/opt/fintrace/current
+EnvironmentFile=/etc/fintrace/fintrace.env
+ExecStartPre=/opt/fintrace/venv/bin/python -m deployment.bootstrap_showcase --seed /opt/fintrace/shared/fintrace-showcase-seed.sqlite3 --runtime /var/lib/fintrace/fintrace.sqlite3
+ExecStart=/opt/fintrace/venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

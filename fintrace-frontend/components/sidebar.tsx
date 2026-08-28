@@ -1,8 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { Conversation, LocalUser } from "@/lib/types";
-import { Check, ChevronUp, Github, MessageSquare, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Trash2, UserPlus } from "lucide-react";
+import { Conversation } from "@/lib/types";
+import { Github, LockKeyhole, MessageSquare, MoreHorizontal, PanelLeftClose, Pencil, Plus, Search, Settings, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 function dayGroup(date: string) {
@@ -20,12 +20,6 @@ export function Sidebar({
   onRenameConversation,
   onDeleteConversation,
   onCollapse,
-  users,
-  activeUser,
-  onSwitchUser,
-  onCreateUser,
-  onRenameUser,
-  onDeleteUser,
 }: {
   conversations: Conversation[];
   activeId: string;
@@ -34,16 +28,9 @@ export function Sidebar({
   onRenameConversation: (conversation: Conversation) => void;
   onDeleteConversation: (conversation: Conversation) => void;
   onCollapse: () => void;
-  users: LocalUser[];
-  activeUser: LocalUser;
-  onSwitchUser: (userId: string) => void;
-  onCreateUser: () => void;
-  onRenameUser: (user: LocalUser) => void;
-  onDeleteUser: (user: LocalUser) => void;
 }) {
   const groups = ["今天", "昨天", "更早"];
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [usersOpen, setUsersOpen] = useState(false);
   const [conversationMenuId, setConversationMenuId] = useState<string | null>(null);
 
   const openGithub = () => window.open("https://github.com/Ink0722/FinTrace", "_blank");
@@ -74,16 +61,17 @@ export function Sidebar({
                   >
                     <MessageSquare size={15} />
                     <span>{conversation.title}</span>
+                    {conversation.immutable && <LockKeyhole size={13} aria-label="只读评测会话" />}
                   </button>
-                  <button
-                    className="conversation-menu-trigger"
-                    aria-label={`管理会话：${conversation.title}`}
-                    aria-expanded={conversationMenuId === conversation.id}
-                    onClick={() => setConversationMenuId((id) => id === conversation.id ? null : conversation.id)}
-                  >
-                    <MoreHorizontal size={15} />
-                  </button>
-                  {conversationMenuId === conversation.id && (
+                  {!conversation.immutable && <button
+                      className="conversation-menu-trigger"
+                      aria-label={`管理会话：${conversation.title}`}
+                      aria-expanded={conversationMenuId === conversation.id}
+                      onClick={() => setConversationMenuId((id) => id === conversation.id ? null : conversation.id)}
+                    >
+                      <MoreHorizontal size={15} />
+                    </button>}
+                  {!conversation.immutable && conversationMenuId === conversation.id && (
                     <div className="conversation-menu">
                       <button className="rename" onClick={() => { setConversationMenuId(null); onRenameConversation(conversation); }}>
                         <Pencil size={14} /> 重命名
@@ -104,35 +92,11 @@ export function Sidebar({
         <button onClick={openGithub}><Github size={16} /><span>GitHub</span></button>
         <button onClick={() => setSettingsOpen((v) => !v)}><Settings size={16} /><span>设置</span></button>
         {settingsOpen && <div className="settings-panel"><strong>FinTrace 设置</strong><span>主题：浅色模式</span><span>Trace：已启用</span></div>}
-        <div className="user-switcher">
-          {usersOpen && (
-            <div className="user-menu">
-              <div className="user-menu-label">切换工作区</div>
-              {users.map((user) => (
-                <div className="user-menu-row" key={user.userId}>
-                  <button className="user-select" onClick={() => { onSwitchUser(user.userId); setUsersOpen(false); }}>
-                    <span className="avatar" style={{ background: user.avatarColor }}>{initials(user.displayName)}</span>
-                    <span>{user.displayName}</span>
-                    {user.userId === activeUser.userId && <Check size={14} />}
-                  </button>
-                  <button title="重命名" onClick={() => onRenameUser(user)}><Pencil size={13} /></button>
-                  {user.userId !== "USER-DEFAULT" && <button title="删除" onClick={() => onDeleteUser(user)}><Trash2 size={13} /></button>}
-                </div>
-              ))}
-              <button className="create-user" onClick={onCreateUser}><UserPlus size={14} />新建本地用户</button>
-            </div>
-          )}
-          <button className="profile-row" onClick={() => setUsersOpen((value) => !value)} aria-expanded={usersOpen}>
-            <span className="avatar" style={{ background: activeUser.avatarColor }}>{initials(activeUser.displayName)}</span>
-            <span className="profile-copy"><strong>{activeUser.displayName}</strong><small>本地研究工作区</small></span>
-            <ChevronUp size={14} className={usersOpen ? "" : "user-chevron-closed"} />
-          </button>
+        <div className="profile-row" aria-label="FinTrace 公开展示空间">
+          <span className="avatar">FT</span>
+          <span className="profile-copy"><strong>FinTrace 展示</strong><small>公开会话空间</small></span>
         </div>
       </div>
     </aside>
   );
-}
-
-function initials(name: string): string {
-  return name.trim().slice(0, 2).toUpperCase() || "FT";
 }

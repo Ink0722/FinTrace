@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from tools.ownership_analysis.config import OWNERSHIP_MAPPING_VERSION, SHAREHOLDERS_FILENAME
+from tools.ownership_analysis.config import OWNERSHIP_MAPPING_VERSION
 
 
 NO_BOUND = "9999-12-31"
@@ -305,6 +305,7 @@ class OwnershipRepository:
 def validate_ownership_index_snapshot(
     index_path: Path, normalized_dir: Path, entity_index_path: Path
 ) -> list[str]:
+    del normalized_dir  # Shareholder source fingerprints are offline build metadata.
     manifest_path = index_path.with_name("manifest.json")
     if not manifest_path.is_file():
         return [f"Ownership index manifest not found: {manifest_path}"]
@@ -320,15 +321,6 @@ def validate_ownership_index_snapshot(
     recorded = manifest.get("source")
     if not isinstance(recorded, dict):
         return [*errors, "Ownership index manifest has no source object."]
-    source_path = normalized_dir / SHAREHOLDERS_FILENAME
-    if not source_path.is_file():
-        errors.append(f"normalized source not found: {source_path}")
-        return errors
-    stat = source_path.stat()
-    if int(recorded.get("size", -1)) != stat.st_size:
-        errors.append(f"normalized source size changed: {source_path}")
-    if int(recorded.get("mtime_ns", -1)) != stat.st_mtime_ns:
-        errors.append(f"normalized source modification time changed: {source_path}")
     recorded_entity = manifest.get("entity_index")
     if not isinstance(recorded_entity, dict):
         errors.append("Ownership index manifest has no entity_index object.")

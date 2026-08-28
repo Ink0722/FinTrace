@@ -86,7 +86,6 @@ export const chatService = {
         body: JSON.stringify({
           query: request.query,
           session_id: request.sessionId,
-          user_id: request.userId,
         }),
       });
     } catch (error) {

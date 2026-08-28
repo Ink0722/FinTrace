@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 
 from schemas.event import EventRecord
-from tools.event_timeline.config import ANNOUNCEMENTS_FILENAME, EVENT_MAPPING_VERSION
+from tools.event_timeline.config import EVENT_MAPPING_VERSION
 
 
 class EventRepository:
@@ -118,6 +118,7 @@ class EventRepository:
 
 
 def validate_event_index_snapshot(index_path: Path, normalized_dir: Path) -> list[str]:
+    del normalized_dir  # The deployed SQLite index is self-contained.
     manifest_path = index_path.with_name("manifest.json")
     if not manifest_path.is_file():
         return [f"Event index manifest not found: {manifest_path}"]
@@ -128,17 +129,9 @@ def validate_event_index_snapshot(index_path: Path, normalized_dir: Path) -> lis
     errors = []
     if manifest.get("mapping_version") != EVENT_MAPPING_VERSION:
         errors.append(f"mapping version mismatch: index={manifest.get('mapping_version')}, expected={EVENT_MAPPING_VERSION}")
-    source_path = normalized_dir / ANNOUNCEMENTS_FILENAME
     recorded = manifest.get("source")
-    if not source_path.is_file():
-        return [*errors, f"normalized source not found: {source_path}"]
     if not isinstance(recorded, dict):
         return [*errors, "Event index manifest has no source object."]
-    stat = source_path.stat()
-    if int(recorded.get("size", -1)) != stat.st_size:
-        errors.append(f"normalized source size changed: {source_path}")
-    if int(recorded.get("mtime_ns", -1)) != stat.st_mtime_ns:
-        errors.append(f"normalized source modification time changed: {source_path}")
     return errors
 
 

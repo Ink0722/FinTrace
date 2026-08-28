@@ -27,3 +27,6 @@ def disable_real_llm_calls(monkeypatch):
     monkeypatch.delenv("FINTRACE_FINANCIAL_INDEX_PATH", raising=False)
     monkeypatch.delenv("FINTRACE_EVENT_NORMALIZED_DIR", raising=False)
     monkeypatch.delenv("FINTRACE_EVENT_INDEX_PATH", raising=False)
+    monkeypatch.delenv("FINTRACE_DEPLOYMENT_MODE", raising=False)
+    monkeypatch.delenv("FINTRACE_INTERNAL_API_KEY", raising=False)
+    monkeypatch.delenv("FINTRACE_SHOWCASE_USER_ID", raising=False)

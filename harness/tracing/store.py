@@ -15,8 +15,9 @@ from harness.runtime_db import connect_runtime, runtime_path
 
 
 load_dotenv()
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 DEFAULT_USER_ID = "USER-DEFAULT"
+SHOWCASE_USER_ID = "USER-SHOWCASE"
 
 
 def observability_path() -> Path:
@@ -235,7 +236,8 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
             user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
             title TEXT NOT NULL DEFAULT '新会话',
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            immutable INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_user_sessions_user_updated
             ON user_sessions(user_id, updated_at DESC);
@@ -245,17 +247,29 @@ def _ensure_schema(connection: sqlite3.Connection) -> None:
         connection.execute(
             "ALTER TABLE agent_runs ADD COLUMN user_id TEXT NOT NULL DEFAULT 'USER-DEFAULT'"
         )
+    session_columns = {row[1] for row in connection.execute("PRAGMA table_info(user_sessions)")}
+    if "immutable" not in session_columns:
+        connection.execute(
+            "ALTER TABLE user_sessions ADD COLUMN immutable INTEGER NOT NULL DEFAULT 0"
+        )
     now = datetime.now(UTC).isoformat()
     connection.execute(
         "INSERT OR IGNORE INTO users(user_id, display_name, avatar_color, created_at, updated_at) "
         "VALUES (?, ?, ?, ?, ?)",
         (DEFAULT_USER_ID, "本地用户", "#078b98", now, now),
     )
+    connection.execute(
+        "INSERT OR IGNORE INTO users(user_id, display_name, avatar_color, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (SHOWCASE_USER_ID, "FinTrace 展示", "#078b98", now, now),
+    )
     connection.execute("UPDATE agent_runs SET user_id = ? WHERE user_id IS NULL OR user_id = ''", (DEFAULT_USER_ID,))
     connection.execute("""
-        INSERT OR IGNORE INTO user_sessions(session_id, user_id, title, created_at, updated_at)
+        INSERT OR IGNORE INTO user_sessions(
+            session_id, user_id, title, created_at, updated_at, immutable
+        )
         SELECT session_id, ?, COALESCE(NULLIF(MIN(query), ''), '历史会话'),
-               MIN(created_at), MAX(created_at)
+               MIN(created_at), MAX(created_at), 0
         FROM agent_runs GROUP BY session_id
     """, (DEFAULT_USER_ID,))
     connection.execute(

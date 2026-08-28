@@ -1,38 +1,7 @@
 import hashlib
-from datetime import date
 
 from schemas.event import EventCluster, EventRecord, EventRelation
 from schemas.evidence import Evidence, EvidenceSource
-
-
-def filter_events(
-    events: list[EventRecord],
-    company_id: str | None,
-    event_types: list[str] | None,
-    start_date: date | None,
-    end_date: date | None,
-) -> list[EventRecord]:
-    allowed_types = set(event_types or [])
-    filtered: list[EventRecord] = []
-    for event in events:
-        if company_id and event.company_id != company_id:
-            continue
-        if allowed_types and event.event_type not in allowed_types:
-            continue
-        if start_date and event.event_date < start_date:
-            continue
-        if end_date and event.event_date > end_date:
-            continue
-        filtered.append(event)
-    return sorted(filtered, key=lambda item: item.event_date)
-
-
-def entity_overlap(left: list[str], right: list[str]) -> float:
-    left_set = set(left)
-    right_set = set(right)
-    if not left_set or not right_set:
-        return 0.0
-    return len(left_set & right_set) / len(left_set | right_set)
 
 
 def topic_similarity(left: str, right: str) -> float:

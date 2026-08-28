@@ -25,7 +25,7 @@ def bm25_index_available(index_path: Path) -> bool:
 
 
 def validate_bm25_index_snapshot(index_path: Path, kb_path: Path) -> list[str]:
-    """Mirror the financial/ownership manifest checks: version + source fingerprint."""
+    """Validate a copied KB/BM25 pair without relying on file timestamps."""
     manifest_path = index_path.with_name("bm25_manifest.json")
     if not manifest_path.is_file():
         return [f"BM25 index manifest not found: {manifest_path}"]
@@ -48,8 +48,18 @@ def validate_bm25_index_snapshot(index_path: Path, kb_path: Path) -> list[str]:
     stat = kb_path.stat()
     if int(recorded.get("size", -1)) != stat.st_size:
         errors.append(f"knowledge base size changed: {kb_path}")
-    if int(recorded.get("mtime_ns", -1)) != stat.st_mtime_ns:
-        errors.append(f"knowledge base modification time changed: {kb_path}")
+    expected_chunks = manifest.get("chunk_count")
+    if expected_chunks is not None:
+        try:
+            with sqlite3.connect(kb_path) as connection:
+                actual_chunks = connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            if int(expected_chunks) != int(actual_chunks):
+                errors.append(
+                    f"knowledge base chunk count changed: expected={expected_chunks}, "
+                    f"actual={actual_chunks}"
+                )
+        except sqlite3.Error as exc:
+            errors.append(f"knowledge base metadata check failed: {type(exc).__name__}: {exc}")
     return errors
 
 

@@ -204,10 +204,6 @@ def build_regions(
     return regions
 
 
-def normalize_heading_text(value: str) -> str:
-    return "".join(value.split()).rstrip("：:")
-
-
 def is_structural_fragment(value: str, *, section_title: str) -> bool:
     stripped = value.strip()
     leaf_title = section_title.rsplit(" / ", maxsplit=1)[-1].strip()

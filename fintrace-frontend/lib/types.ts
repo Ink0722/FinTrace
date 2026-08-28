@@ -55,18 +55,10 @@ export type Conversation = {
   turnCount?: number;
   hasMore?: boolean;
   oldestTurn?: number;
-};
-
-export type LocalUser = {
-  userId: string;
-  displayName: string;
-  avatarColor: string;
-  createdAt: string;
-  updatedAt: string;
+  immutable?: boolean;
 };
 
 export type ChatRequest = {
   query: string;
   sessionId: string;
-  userId: string;
 };

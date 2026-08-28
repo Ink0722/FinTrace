@@ -120,13 +120,26 @@ def test_document_search_requires_bm25_index(fts5_index, monkeypatch) -> None:
     assert result.error.details["build_command"] == "python -m data_pipeline.documents.build_bm25_index"
 
 
-def test_document_search_rejects_stale_bm25_index(fts5_index, monkeypatch) -> None:
+def test_document_search_accepts_portable_bm25_index(fts5_index, monkeypatch) -> None:
     import json
 
     kb_path, index_path = fts5_index
     manifest_path = index_path.with_name("bm25_manifest.json")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["kb"]["mtime_ns"] = 1
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setenv("FINTRACE_KB_PATH", str(kb_path))
+    result = document_search(_call({"query": "存货", "mode": "hybrid"}))
+    assert result.status.value == "success"
+
+
+def test_document_search_rejects_mismatched_portable_bm25_index(fts5_index, monkeypatch) -> None:
+    import json
+
+    kb_path, index_path = fts5_index
+    manifest_path = index_path.with_name("bm25_manifest.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["chunk_count"] += 1
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     monkeypatch.setenv("FINTRACE_KB_PATH", str(kb_path))
     result = document_search(_call({"query": "存货", "mode": "hybrid"}))

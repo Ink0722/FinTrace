@@ -25,6 +25,8 @@ build/
 dist/
 node_modules/
 .next/
+.next-dev/
+fintrace-frontend/tsconfig.tsbuildinfo
 *.egg-info/
 
 # Logs and runtime output

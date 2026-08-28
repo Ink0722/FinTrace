@@ -37,10 +37,6 @@ def normalize_text(text: str) -> str:
     return text.strip()
 
 
-def split_text(text: str, *, max_chars: int, overlap_chars: int) -> list[str]:
-    return [chunk for chunk, _ in split_text_with_sections(text, max_chars=max_chars, overlap_chars=overlap_chars)]
-
-
 def split_text_with_sections(text: str, *, max_chars: int, overlap_chars: int) -> list[tuple[str, str | None]]:
     paragraphs = [paragraph.strip() for paragraph in re.split(r"\n\s*\n", text) if paragraph.strip()]
     if not paragraphs:
