@@ -150,6 +150,9 @@ class LlmCallRecord(BaseModel):
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     response_chars: int = 0
+    response_tail: str | None = None
+    validation_stage: str | None = None
+    validation_error: str | None = None
     error_type: str | None = None
     error_message: str | None = None
 

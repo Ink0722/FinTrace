@@ -1,0 +1,32 @@
+=== CASH_PROFIT_DIVERGENCE x22
+  formula: for each adjacent comparable period: profit_growth > 0 and cashflow_growth <= -0.2, or positive_profit and cashflow_to_profit < 0.5
+  thresholds: {"cashflow_growth_max": -0.2, "cashflow_to_profit_max": 0.5}
+  applicability: 逐相邻期间判断；两期归母净利润均须大于0，否则该期间对不适用。增长率=(本期-上期)/abs(上期)，上期值为0时增长率不可计算。
+=== RECEIVABLE_REVENUE_DIVERGENCE x23
+  formula: for each adjacent comparable period: receivable_growth - revenue_growth >= 0.3 and receivable_growth > 0
+  thresholds: {"growth_gap_min": 0.3}
+  applicability: 逐相邻期间判断；上期应收账款和上期营业收入均须大于0，否则该期间对不适用。增长率=(本期-上期)/abs(上期)。
+=== INVENTORY_REVENUE_DIVERGENCE x23
+  formula: for each adjacent comparable period: inventory_growth - revenue_growth >= 0.3 and inventory_growth > 0
+  thresholds: {"growth_gap_min": 0.3}
+  applicability: 逐相邻期间判断；上期存货和上期营业收入均须大于0，否则该期间对不适用。增长率=(本期-上期)/abs(上期)。
+=== LIQUIDITY_PRESSURE x22
+  formula: for each report period: current_ratio < 1.0 or cash_to_current_liabilities < 0.2
+  thresholds: {"cash_coverage_min": 0.2, "current_ratio_min": 1.0}
+  applicability: 逐报告期判断；流动负债须大于0，否则该期间不适用。
+=== MARGIN_VOLATILITY x23
+  formula: for each adjacent comparable period: abs(gross_margin_change) >= 0.1 or abs(operating_margin_change) >= 0.1
+  thresholds: {"margin_change_min": 0.1}
+  applicability: 逐相邻期间判断；两期营业收入均须大于0，否则该期间对不适用。毛利率=(营业收入-营业成本)/营业收入，营业利润率=营业利润/营业收入。
+=== NEGATIVE_OPERATING_CASHFLOW_PERSISTENCE x22
+  formula: operating_cashflow < 0 for at least 2 consecutive requested periods
+  thresholds: {"consecutive_periods_min": 2}
+  applicability: 按输入期间顺序判断连续负值；至少需要阈值规定数量的期间。缺失期间会中断连续序列。
+=== SALES_CASH_REVENUE_DIVERGENCE x22
+  formula: for each adjacent comparable period: sales_cash_to_revenue < 0.8 or ratio_change <= -0.2
+  thresholds: {"cash_to_revenue_min": 0.8, "ratio_change_max": -0.2}
+  applicability: 逐报告期判断；当期营业收入须大于0，否则该期不适用，并重置上一期比率。比率变化仅在相邻两个适用期间之间计算。
+=== LEVERAGE_PRESSURE x22
+  formula: for each report period: debt_to_assets >= 0.7, or adjacent increase >= 0.1
+  thresholds: {"debt_ratio_increase_max": 0.1, "debt_ratio_max": 0.7}
+  applicability: 逐报告期判断；当期总资产须大于0，否则该期不适用，并重置上一期资产负债率。比率变化仅在相邻两个适用期间之间计算。

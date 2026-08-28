@@ -1,3 +1,5 @@
+import json
+
 from harness.prompts import (
     PromptFileError,
     SKILL_REGISTRY,
@@ -5,7 +7,7 @@ from harness.prompts import (
     core_skill_files,
     load_prompt,
 )
-from harness.skills import run_skill
+from harness.skills import CITATION_MAPPING_LIMITATION, run_skill
 from schemas.request import FinalAnswer, ParsedRequest
 from schemas.memory import MemoryUpdate
 
@@ -188,19 +190,25 @@ def test_memory_summarizer_prompt_and_schema_are_active() -> None:
     assert record.status == "success"
 
 
-def test_final_answer_retries_semantically_truncated_json() -> None:
+def test_final_answer_retries_missing_citations_with_targeted_context() -> None:
     from harness.llm import QwenClient
 
     class FakeClient(QwenClient):
         def __init__(self):
             super().__init__(api_key="test-key")
             self.calls = 0
+            self.messages = []
 
         def chat_json(self, messages, temperature=0.0):
             self.calls += 1
-            answer = "机构观点显示，主要包括：" if self.calls == 1 else "机构观点显示相关产品需求增长。"
+            self.messages.append(messages)
+            used_ids = [] if self.calls == 1 else ["E1"]
             return {
-                "choices": [{"message": {"content": '{"answer":"' + answer + '","used_evidence_ids":["E1"],"limitations_disclosed":[]}'}, "finish_reason": "stop"}],
+                "choices": [{"message": {"content": json.dumps({
+                    "answer": "机构观点显示相关产品需求增长。",
+                    "used_evidence_ids": used_ids,
+                    "limitations_disclosed": [],
+                }, ensure_ascii=False)}, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 12, "completion_tokens": 8},
             }
 
@@ -221,6 +229,83 @@ def test_final_answer_retries_semantically_truncated_json() -> None:
     assert record.attempt_count == 2
     assert record.prompt_tokens == 12
     assert record.completion_tokens == 8
+    repair_payload = json.loads(client.messages[1][1]["content"])
+    repair_request = repair_payload["_repair_request"]
+    assert "机构观点显示相关产品需求增长" in repair_request["previous_output"]
+    assert repair_request["allowed_evidence_ids"] == ["E1"]
+
+
+def test_final_answer_merges_supplied_limitations_without_retry() -> None:
+    from harness.llm import QwenClient
+
+    class FakeClient(QwenClient):
+        def __init__(self):
+            super().__init__(api_key="test-key")
+            self.calls = 0
+
+        def chat_json(self, messages, temperature=0.0):
+            self.calls += 1
+            return {
+                "choices": [{"message": {"content": json.dumps({
+                    "answer": "当前证据只能支持有限范围内的判断。",
+                    "used_evidence_ids": [],
+                    "limitations_disclosed": [],
+                }, ensure_ascii=False)}, "finish_reason": "stop"}],
+            }
+
+    client = FakeClient()
+    output, record = run_skill(
+        "final_answer",
+        {
+            "answer_status": "partially_answered",
+            "supporting_evidence": [{"evidence_id": "E1"}],
+            "limitations": ["缺少监管事件记录。"],
+        },
+        client=client,
+    )
+
+    assert isinstance(output, FinalAnswer)
+    assert output.limitations_disclosed == ["缺少监管事件记录。"]
+    assert client.calls == 1
+    assert record.status == "success"
+
+
+def test_final_answer_downgrades_after_citation_repair_is_exhausted() -> None:
+    from harness.llm import QwenClient
+
+    class FakeClient(QwenClient):
+        def __init__(self):
+            super().__init__(api_key="test-key")
+            self.calls = 0
+
+        def chat_json(self, messages, temperature=0.0):
+            self.calls += 1
+            return {
+                "choices": [{"message": {"content": json.dumps({
+                    "answer": "文档证据显示行业需求保持增长。",
+                    "used_evidence_ids": [],
+                    "limitations_disclosed": [],
+                }, ensure_ascii=False)}, "finish_reason": "stop"}],
+            }
+
+    client = FakeClient()
+    output, record = run_skill(
+        "final_answer",
+        {
+            "answer_status": "answered",
+            "supporting_evidence": [{"evidence_id": "E1"}],
+            "limitations": [],
+        },
+        client=client,
+    )
+
+    assert isinstance(output, FinalAnswer)
+    assert output.used_evidence_ids == []
+    assert CITATION_MAPPING_LIMITATION in output.limitations_disclosed
+    assert client.calls == 2
+    assert record.status == "recovered"
+    assert record.validation_stage == "final_answer_metadata"
+    assert record.validation_error == CITATION_MAPPING_LIMITATION
 
 
 def test_final_answer_accepts_complete_text_without_terminal_punctuation() -> None:
@@ -279,4 +364,6 @@ def test_final_answer_records_length_truncation_failure() -> None:
     assert record.finish_reason == "length"
     assert record.error_type == "ValueError"
     assert "finish_reason=length" in record.error_message
+    assert record.response_tail and "分析结果仍包括" in record.response_tail
+    assert record.validation_stage == "response_validation"
     assert record.latency_ms >= 0

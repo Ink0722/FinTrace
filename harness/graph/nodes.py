@@ -24,7 +24,7 @@ from harness.routing.financial_period_resolver import resolve_financial_periods
 from harness.routing.entities import is_explicit_topic_subject
 from harness.routing.planner import plan_next_action
 from harness.routing.request_parser import parse_request
-from harness.skills import run_skill
+from harness.skills import CITATION_MAPPING_LIMITATION, run_skill
 from schemas.enums import ToolName
 from schemas.request import AgentAction, EvidenceReview, PreAnswerability
 
@@ -468,6 +468,10 @@ def generate_answer_node(state: AgentState) -> AgentState:
     if record is not None:
         state.llm_calls.append(record)
     if result is not None:
+        if state.answer_status == "answered" and state.evidence_ledger and not result.used_evidence_ids:
+            state.answer_status = "partially_answered"
+            if CITATION_MAPPING_LIMITATION not in state.warnings:
+                state.warnings.append(CITATION_MAPPING_LIMITATION)
         state.final_answer = result.model_dump_json(ensure_ascii=False)
         state.llm_status = "success"
         state.workflow_status = state.answer_status or "completed"

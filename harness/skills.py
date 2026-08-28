@@ -14,6 +14,9 @@ from harness.prompts import SKILL_REGISTRY, PromptFileError, build_system_prompt
 from schemas.request import LlmCallRecord
 
 
+CITATION_MAPPING_LIMITATION = "回答正文已生成，但证据引用映射未完成，引用关系需进一步核验。"
+
+
 def run_skill(
     skill: str,
     runtime_context: dict[str, Any],
@@ -77,12 +80,24 @@ def run_skill(
     last_error_type: str | None = None
     last_finish_reason: str | None = None
     last_response_chars = 0
+    last_response_content = ""
+    last_response_tail: str | None = None
+    last_validation_stage: str | None = None
+    last_validation_error: str | None = None
     last_usage: dict[str, Any] = {}
     for attempt in range(2):
         try:
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": payload if attempt == 0 else payload + _retry_hint(last_error)},
+                {
+                    "role": "user",
+                    "content": payload if attempt == 0 else _retry_payload(
+                        runtime_context,
+                        error=last_error,
+                        previous_output=last_response_content,
+                        skill=skill,
+                    ),
+                },
             ]
             if skill == "final_answer" and attempt == 0 and streaming_enabled():
                 chunks = []
@@ -99,6 +114,8 @@ def run_skill(
             last_finish_reason = finish_reason
             last_usage = usage or {}
             last_response_chars = len(content)
+            last_response_content = content
+            last_response_tail = content[-500:]
             if finish_reason not in {None, "stop"}:
                 raise ValueError(f"completion ended with finish_reason={finish_reason}")
             decoded = json.loads(content)
@@ -107,7 +124,17 @@ def run_skill(
                 # model should be allowed to omit or rewrite.
                 decoded["raw_query"] = runtime_context["raw_query"]
             model_output = model_class.model_validate(decoded)
-            _validate_output_semantics(skill, model_output, runtime_context)
+            if skill == "final_answer":
+                _normalize_final_answer(model_output, runtime_context)
+            citation_mapping_missing = _validate_output_semantics(
+                skill,
+                model_output,
+                runtime_context,
+                allow_missing_citations=skill == "final_answer" and attempt == 1,
+            )
+            if citation_mapping_missing:
+                last_validation_stage = "final_answer_metadata"
+                last_validation_error = CITATION_MAPPING_LIMITATION
             if skill == "final_answer" and streaming_enabled():
                 _emit_validated_answer(model_output)
             return model_output, LlmCallRecord(
@@ -118,14 +145,21 @@ def run_skill(
                 prompt_tokens=_usage_value(last_usage, "prompt_tokens", "input_tokens"),
                 completion_tokens=_usage_value(last_usage, "completion_tokens", "output_tokens"),
                 response_chars=last_response_chars,
+                response_tail=last_response_tail if citation_mapping_missing else None,
+                validation_stage=last_validation_stage,
+                validation_error=last_validation_error,
                 **record_kwargs,
             )
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError, ValidationError) as exc:
             last_error_type = type(exc).__name__
             last_error = f"{type(exc).__name__}: {exc}"
+            last_validation_stage = "response_validation"
+            last_validation_error = last_error
         except Exception as exc:  # network / API failures
             last_error_type = type(exc).__name__
             last_error = f"{type(exc).__name__}: {exc}"
+            last_validation_stage = "llm_request"
+            last_validation_error = last_error
     return None, LlmCallRecord(
         latency_ms=elapsed_ms(total_started),
         status="failed",
@@ -134,58 +168,93 @@ def run_skill(
         prompt_tokens=_usage_value(last_usage, "prompt_tokens", "input_tokens"),
         completion_tokens=_usage_value(last_usage, "completion_tokens", "output_tokens"),
         response_chars=last_response_chars,
+        response_tail=last_response_tail,
+        validation_stage=last_validation_stage,
+        validation_error=last_validation_error,
         error_type=last_error_type,
         error_message=last_error[:1000] or "LLM skill failed without an error message.",
         **record_kwargs,
     )
 
 
-def _retry_hint(error: str) -> str:
-    return (
-        "\n\n--- 上一次输出未通过完整性或 Schema 校验，错误如下，请修正后重新输出完整 JSON ---\n"
-        f"{error}"
-    )
+def _retry_payload(
+    runtime_context: dict[str, Any],
+    *,
+    error: str,
+    previous_output: str,
+    skill: str,
+) -> str:
+    retry_context = dict(runtime_context)
+    repair_request: dict[str, Any] = {
+        "validation_error": error,
+        "previous_output": previous_output,
+        "instruction": "保留上次输出中正确的内容，只修复校验错误，并重新输出完整 JSON。",
+    }
+    if skill == "final_answer":
+        repair_request.update({
+            "allowed_evidence_ids": _available_evidence_ids(runtime_context),
+            "required_limitations": list(runtime_context.get("limitations") or []),
+            "constraints": [
+                "不得增加 supporting_evidence 之外的新事实。",
+                "used_evidence_ids 只能从 allowed_evidence_ids 中选择。",
+                "若 answer_status=answered 且候选证据非空，至少选择一个实际支持正文的 Evidence ID。",
+                "limitations_disclosed 必须覆盖 required_limitations。",
+            ],
+        })
+    retry_context["_repair_request"] = repair_request
+    return json.dumps(retry_context, ensure_ascii=False, default=str)
 
 
-def _validate_output_semantics(skill: str, output: BaseModel, runtime_context: dict[str, Any]) -> None:
+def _validate_output_semantics(
+    skill: str,
+    output: BaseModel,
+    runtime_context: dict[str, Any],
+    *,
+    allow_missing_citations: bool = False,
+) -> bool:
     if skill != "final_answer":
-        return
+        return False
     answer = str(getattr(output, "answer", "")).strip()
     if len(answer) < 8:
         raise ValueError("final answer is empty or too short")
-    if not _looks_complete(answer):
-        raise ValueError("final answer appears semantically truncated")
 
-    available_ids = {
-        str(item.get("evidence_id"))
-        for item in runtime_context.get("supporting_evidence", [])
-        if item.get("evidence_id")
-    }
+    available_ids = set(_available_evidence_ids(runtime_context))
     used_ids = list(getattr(output, "used_evidence_ids", []))
     unknown_ids = [item for item in used_ids if item not in available_ids]
     if unknown_ids:
         raise ValueError(f"used_evidence_ids are not present in supporting_evidence: {unknown_ids}")
     if runtime_context.get("answer_status") == "answered" and available_ids and not used_ids:
-        raise ValueError("answered output must cite at least one supporting evidence id")
+        if not allow_missing_citations:
+            raise ValueError("answered output must cite at least one supporting evidence id")
+        output.limitations_disclosed = _deduplicate([
+            *output.limitations_disclosed,
+            CITATION_MAPPING_LIMITATION,
+        ])
+        return True
+    return False
 
-    expected_limitations = runtime_context.get("limitations") or []
-    disclosed = list(getattr(output, "limitations_disclosed", []))
-    if runtime_context.get("answer_status") in {"partially_answered", "insufficient_evidence"}:
-        if expected_limitations and not disclosed:
-            raise ValueError("partial or insufficient output must disclose supplied limitations")
+
+def _normalize_final_answer(output: BaseModel, runtime_context: dict[str, Any]) -> None:
+    available_ids = set(_available_evidence_ids(runtime_context))
+    output.used_evidence_ids = _deduplicate([
+        item for item in output.used_evidence_ids if item in available_ids
+    ])
+    output.limitations_disclosed = _deduplicate([
+        *output.limitations_disclosed,
+        *(runtime_context.get("limitations") or []),
+    ])
 
 
-def _looks_complete(answer: str) -> bool:
-    stripped = answer.rstrip()
-    incomplete_suffixes = (
-        "包括：", "包括:", "例如：", "例如:", "具体如下：", "具体如下:",
-        "分别为：", "分别为:", "主要有：", "主要有:", "：", ":", ",", "，", "、",
-    )
-    if stripped.endswith(incomplete_suffixes):
-        return False
-    if stripped.count("**") % 2 or stripped.count("```") % 2:
-        return False
-    return True
+def _available_evidence_ids(runtime_context: dict[str, Any]) -> list[str]:
+    return _deduplicate([
+        str(item.get("evidence_id"))
+        for item in runtime_context.get("supporting_evidence", [])
+        if item.get("evidence_id")
+    ])
+
+
+def _deduplicate(items: list[str]) -> list[str]:
+    return list(dict.fromkeys(item for item in items if item))
 
 
 def _emit_validated_answer(output: BaseModel) -> None:

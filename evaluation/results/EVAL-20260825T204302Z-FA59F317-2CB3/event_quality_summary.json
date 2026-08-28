@@ -1,0 +1,30 @@
+{
+  "batch_id": "EVAL-20260825T204302Z-FA59F317-2CB3",
+  "prompt_version": "event-quality-review-v1",
+  "case_source": "specialty_tool_benchmark.json",
+  "case_count": 30,
+  "key_event_count": 117,
+  "key_event_hit_count": 117,
+  "key_event_recall": 1.0,
+  "cluster_pairwise_precision": 0.93131,
+  "cluster_pairwise_recall": 0.32335,
+  "cluster_pairwise_f1": 0.480033,
+  "supported_relation_count": 0,
+  "unsupported_relation_count": 0,
+  "uncertain_relation_count": 0,
+  "severe_temporal_break_count": 0,
+  "deterministic_temporal_violation_count": 0,
+  "cutoff_violation_count": 0,
+  "event_query_p95_ms": 7.55,
+  "event_cluster_p95_ms": 6.55,
+  "p95_ms": 7.55,
+  "scope_note": "Key-event recall measures preservation within the frozen event index; it does not measure extraction recall over all raw announcements.",
+  "validation": {
+    "complete": true
+  },
+  "provenance": {
+    "benchmark_sha256": "45497f98a334c22112af4f9dbbc969c6dd1bd2e305364f505e9edd594931cc1e",
+    "inputs_sha256": "9bd1cef174baaec90e168929f6c6b96e514acd7ba24dd11330a4bf5862f5641b",
+    "reviews_sha256": "34ce531c5b338ad437110dbe0796239d26a4340cba7bf7279629ed1995ff2ff3"
+  }
+}

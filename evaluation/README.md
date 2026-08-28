@@ -50,3 +50,10 @@ They are no longer written by CLI, API, frontend or evaluation execution.
 The resumable multi-turn runner is documented in
 [`runner/README.md`](runner/README.md). Evaluation batches use dedicated local users,
 fixed knowledge cutoffs and `run_id` links into the same observability database.
+
+## Result analysis
+
+Completed batches can be exported into review sheets and whitepaper result tables with
+the read-only workflow documented in [`analysis/README.md`](analysis/README.md). Generated
+files are stored under `evaluation/results/<batch_id>/`; quality metrics remain blank until
+the corresponding human or calibrated LLM review fields are completed.

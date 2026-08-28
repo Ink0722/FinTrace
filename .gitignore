@@ -79,3 +79,6 @@ Thumbs.db
 # IDE settings
 .idea/
 .vscode/
+
+# Kept locally for thesis writing; it is maintained as a separate Git repository.
+Overleaf-FinTrace-Template/

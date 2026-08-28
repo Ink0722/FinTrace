@@ -1,0 +1,56 @@
+{
+  "batch_id": "EVAL-20260825T204302Z-FA59F317-2CB3",
+  "note": "LLM初审结果，供人工复核；未填写final_correct，不是最终实验结论",
+  "prompt_version": "answer-llm-review-v3",
+  "evaluation_model": "qwen3.7-plus",
+  "temperature": 0.0,
+  "knowledge_cutoff": "2026-05-28",
+  "total_cases": 1410,
+  "reviewed_cases": 1410,
+  "correct_cases": 1341,
+  "incorrect_cases": 69,
+  "fact_reviewed_cases": 248,
+  "necessary_fact_count": 1160,
+  "hit_fact_count": 1103,
+  "provisional_answer_accuracy": 0.9511,
+  "provisional_key_fact_recall": 0.9509,
+  "unanswerable_cases": 864,
+  "correct_boundary_responses": 850,
+  "validation_errors": [],
+  "provenance": {
+    "question_set_sha256": "fa59f31787e010f441737d362bc2a6c09eadc6e92ac825a66f69fefe5b1897d8",
+    "database": "runtime/fintrace.sqlite3 (read-only)",
+    "backup": "answer_review.before_llm_review.csv"
+  },
+  "evaluation_run": {
+    "prompt_versions": {
+      "v2_full_run": {
+        "cases": 1282,
+        "note": "初版全量"
+      },
+      "v3_rejudge": {
+        "cases": 128,
+        "note": "修复answer_status=unsupported误读为失败、note与label矛盾、空note、常识引用；57例no纠正为yes"
+      },
+      "manual_overrides": {
+        "cases": 6,
+        "list": [
+          "SESSION-004-TURN-010(DashScope两次超时)",
+          "SESSION-005-TURN-030",
+          "SESSION-005-TURN-031",
+          "SESSION-014-TURN-046",
+          "SESSION-031-TURN-024",
+          "SESSION-035-TURN-025"
+        ]
+      }
+    },
+    "timing_seconds": {
+      "v2_trial": 90.9,
+      "v2_limit100": 358.2,
+      "v2_full": 3148.7,
+      "v3_rejudge": 380.7
+    },
+    "resume_policy": "judgments JSONL按case_id断点续写；CSV按已有llm_label跳过；rejudge针对llm_label=no或note为空的行",
+    "review_scope": "final runs via evaluation_cases.run_id；证据来自evidence_records；未使用互联网；未调用Agent重新生成"
+  }
+}

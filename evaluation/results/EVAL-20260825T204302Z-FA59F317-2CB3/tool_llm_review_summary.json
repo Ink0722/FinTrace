@@ -1,0 +1,136 @@
+{
+  "batch_id": "EVAL-20260825T204302Z-FA59F317-2CB3",
+  "prompt_version": "tool-llm-review-v4",
+  "evaluation_model": "qwen3.7-plus",
+  "temperature": 0.0,
+  "knowledge_cutoff": "2026-05-28",
+  "case_count": 1410,
+  "unique_case_ids": 1410,
+  "turns_with_calls": 364,
+  "turns_without_calls": 1046,
+  "turn_tool_route_correct": 1128,
+  "turn_route_rate": 0.8,
+  "total_calls_judged": 570,
+  "final_call_correct": 242,
+  "tool_call_precision": 0.4246,
+  "turns_with_missing_required_calls": 86,
+  "answerability_counts": {
+    "unanswerable": 1095,
+    "answerable": 191,
+    "partially_answerable": 40,
+    "ambiguous": 84
+  },
+  "needs_human_review": 41,
+  "per_tool": {
+    "document_search.search": {
+      "calls": 206,
+      "final_call_correct": 96,
+      "call_needed_false": 104,
+      "parameter_issues": 96
+    },
+    "research_analysis.view_query": {
+      "calls": 109,
+      "final_call_correct": 45,
+      "call_needed_false": 61,
+      "parameter_issues": 30
+    },
+    "event_timeline.event_query": {
+      "calls": 119,
+      "final_call_correct": 46,
+      "call_needed_false": 59,
+      "parameter_issues": 43
+    },
+    "financial_analysis.risk_scan": {
+      "calls": 24,
+      "final_call_correct": 20,
+      "call_needed_false": 4,
+      "parameter_issues": 3
+    },
+    "financial_analysis.metric_query": {
+      "calls": 25,
+      "final_call_correct": 7,
+      "call_needed_false": 4,
+      "parameter_issues": 18
+    },
+    "ownership_analysis.holding_query": {
+      "calls": 76,
+      "final_call_correct": 23,
+      "call_needed_false": 52,
+      "parameter_issues": 20
+    },
+    "financial_analysis.metric_compare": {
+      "calls": 4,
+      "final_call_correct": 1,
+      "call_needed_false": 0,
+      "parameter_issues": 3
+    },
+    "ownership_analysis.holding_compare": {
+      "calls": 7,
+      "final_call_correct": 4,
+      "call_needed_false": 0,
+      "parameter_issues": 3
+    }
+  },
+  "conflict_rows": 1156,
+  "conflict_cases": 646,
+  "conflict_type_counts": {
+    "answerability_mismatch": 394,
+    "incorrect_call": 328,
+    "annotation_tools_conflict": 264,
+    "missing_required_calls": 86,
+    "multiple_acceptable_plans": 43,
+    "low_confidence_or_flagged": 41
+  },
+  "evaluation_run": {
+    "v4_prefix_run": {
+      "cases": 118,
+      "elapsed_seconds": 265.6
+    },
+    "v4_full_run": {
+      "cases": 1292,
+      "elapsed_seconds": 3851.0,
+      "parse_failures": 0
+    },
+    "single_case_reevaluation": {
+      "cases": 1,
+      "reason": "SESSION-012-TURN-042 first pass returned empty calls array; re-evaluated with same v4 prompt",
+      "elapsed_seconds": 44.5
+    },
+    "post_review_adjustments": {
+      "cases": 2,
+      "detail": "SESSION-012-TURN-042, SESSION-014-TURN-036 flagged needs_human_review for cross-case consistency concerns; judgments unchanged"
+    },
+    "total_llm_wall_time_seconds": 4161.1,
+    "parse_retry_policy": "max 2 retries on JSON parse failure (0 failures occurred)",
+    "resume_policy": "skip case_id already present in tool_llm_review.jsonl",
+    "prompt_calibration_history": [
+      "v1 initial",
+      "v2 compound-question rule",
+      "v3 call_needed decoupled from parameter quality; metric_query multi-company clarified",
+      "v4 derived-ratio in-scope rule"
+    ],
+    "review_scope": "final runs via evaluation_cases.run_id; final answers never shown to evaluator",
+    "known_limitations": [
+      "板块/行业观点类问题存在少量跨case不一致（2例已标记人审）",
+      "旧标注valid_tools不含research_analysis.view_query（109次实际调用全部无对应旧标注），annotation_tools_conflict按设计记录",
+      "call_needed与parameters_correct偶有语义耦合，已在v3 prompt缓解"
+    ]
+  },
+  "provenance": {
+    "input_file_hashes": {
+      "questions_annotated_v1.jsonl": "fa59f31787e010f441737d362bc2a6c09eadc6e92ac825a66f69fefe5b1897d8"
+    },
+    "database": "runtime/fintrace.sqlite3 (read-only)"
+  },
+  "validation": {
+    "expected_cases": 1410,
+    "reviewed_cases": 1410,
+    "missing_case_ids": [],
+    "unexpected_case_ids": [],
+    "duplicate_case_ids": 0,
+    "expected_tool_calls": 570,
+    "judged_tool_calls": 570,
+    "call_sequence_mismatches": [],
+    "complete": true
+  }
+}
