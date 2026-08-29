@@ -15,6 +15,8 @@ from tools.event_timeline.repository import EventRepository, validate_event_inde
 from tools.event_timeline.timeline import build_event_relations, cluster_events, evidence_from_clusters
 from tools.event_timeline.validation import SUPPORTED_EVENT_TYPES, validate_events
 
+INDEX_RECOVERY_HINT = "Upload the prebuilt events.sqlite to the configured index path."
+
 
 class EventTimelineArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -70,10 +72,10 @@ def event_timeline(call: ToolCall) -> ToolResult:
 
     repository = EventRepository(config.index_path)
     if not repository.available():
-        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, f"Event index not found: {config.index_path}", details={"build_command": "python -m data_pipeline.events.build_index"})
+        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, f"Event index not found: {config.index_path}", details={"recovery_hint": INDEX_RECOVERY_HINT})
     snapshot_errors = validate_event_index_snapshot(config.index_path, config.normalized_dir)
     if snapshot_errors:
-        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "Event index is stale or incomplete; rebuild it from normalized announcements.", details={"errors": snapshot_errors, "build_command": "python -m data_pipeline.events.build_index"})
+        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "Event index is stale or incomplete.", details={"errors": snapshot_errors, "recovery_hint": INDEX_RECOVERY_HINT})
     try:
         events = repository.query_events(
             company_id=arguments.entity_ids[0], event_types=arguments.event_types,

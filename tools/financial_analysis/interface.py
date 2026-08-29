@@ -19,6 +19,8 @@ from tools.financial_analysis.repository import FinancialRepository, validate_in
 from tools.financial_analysis.risk_catalog import RISK_RULES, select_rules
 from tools.financial_analysis.risk_scan import run_risk_scan
 
+INDEX_RECOVERY_HINT = "Upload the prebuilt financial_metrics.sqlite to the configured index path."
+
 
 class RiskScanArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -149,10 +151,7 @@ def financial_analysis(call: ToolCall) -> ToolResult:
             started,
             ErrorType.DATA_NOT_AVAILABLE,
             f"Financial metric index not found: {config.index_path}",
-            details={
-                "build_command": "python -m data_pipeline.financial.build_index",
-                "normalized_dir": str(config.normalized_dir),
-            },
+            details={"recovery_hint": INDEX_RECOVERY_HINT},
         )
 
     snapshot_errors = validate_index_snapshot(config.index_path, config.normalized_dir)
@@ -164,7 +163,7 @@ def financial_analysis(call: ToolCall) -> ToolResult:
             "Financial metric index is stale or incomplete; rebuild it from normalized data.",
             details={
                 "errors": snapshot_errors,
-                "build_command": "python -m data_pipeline.financial.build_index",
+                "recovery_hint": INDEX_RECOVERY_HINT,
             },
         )
 
@@ -292,10 +291,10 @@ def _execute_risk_scan(call: ToolCall, started: float) -> ToolResult:
         return _failed(call, started, ErrorType.INVALID_ARGUMENT, f"Invalid risk_scan arguments or configuration: {exc}", details={"arguments": call.arguments})
     repository = FinancialRepository(config.index_path)
     if not repository.available():
-        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, f"Financial metric index not found: {config.index_path}", details={"build_command": "python -m data_pipeline.financial.build_index"})
+        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, f"Financial metric index not found: {config.index_path}", details={"recovery_hint": INDEX_RECOVERY_HINT})
     snapshot_errors = validate_index_snapshot(config.index_path, config.normalized_dir)
     if snapshot_errors:
-        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "Financial metric index is stale or incomplete; rebuild it from normalized data.", details={"errors": snapshot_errors, "build_command": "python -m data_pipeline.financial.build_index"})
+        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "Financial metric index is stale or incomplete.", details={"errors": snapshot_errors, "recovery_hint": INDEX_RECOVERY_HINT})
     rules = select_rules(arguments.rule_ids, arguments.focus_topics)
     metric_codes = sorted({metric for rule in rules for metric in rule.required_metrics})
     periods = [value.isoformat() for value in arguments.report_periods]

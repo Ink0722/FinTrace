@@ -34,7 +34,7 @@ DATA_LIMITATION = (
     "不构成完整股权或实际控制人认定。"
 )
 EXIT_LIMITATION = "退出主要股东名单不等于已经清仓，只能说明该股东未出现在后续主要股东快照中。"
-BUILD_COMMAND = "python -m data_pipeline.ownership.build_index"
+INDEX_RECOVERY_HINT = "Upload ownership_holdings.sqlite and entity_master.sqlite to their configured index paths."
 
 
 class OwnershipAnalysisArguments(BaseModel):
@@ -164,8 +164,7 @@ def ownership_analysis(call: ToolCall) -> ToolResult:
             ErrorType.DATA_NOT_AVAILABLE,
             f"Ownership holdings index not found: {config.index_path}",
             details={
-                "build_command": BUILD_COMMAND,
-                "normalized_dir": str(config.normalized_dir),
+                "recovery_hint": INDEX_RECOVERY_HINT,
             },
         )
     snapshot_errors = validate_ownership_index_snapshot(
@@ -176,8 +175,8 @@ def ownership_analysis(call: ToolCall) -> ToolResult:
             call,
             started,
             ErrorType.DATA_NOT_AVAILABLE,
-            "Ownership holdings index is stale or incomplete; rebuild it from normalized data.",
-            details={"errors": snapshot_errors, "build_command": BUILD_COMMAND},
+            "Ownership holdings index is stale or incomplete.",
+            details={"errors": snapshot_errors, "recovery_hint": INDEX_RECOVERY_HINT},
         )
 
     try:
@@ -202,12 +201,12 @@ def _penetration(call: ToolCall, started: float) -> ToolResult:
         return _failed(call, started, ErrorType.INVALID_ARGUMENT, f"Invalid penetration arguments or configuration: {exc}", details={"arguments": call.arguments})
     repository = OwnershipRepository(config.index_path)
     if not repository.available():
-        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, f"Ownership holdings index not found: {config.index_path}", details={"build_command": BUILD_COMMAND})
+        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, f"Ownership holdings index not found: {config.index_path}", details={"recovery_hint": INDEX_RECOVERY_HINT})
     snapshot_errors = validate_ownership_index_snapshot(
         config.index_path, config.normalized_dir, config.entity_index_path
     )
     if snapshot_errors:
-        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "Ownership holdings index is stale or incomplete; rebuild it from normalized data.", details={"errors": snapshot_errors, "build_command": BUILD_COMMAND})
+        return _failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "Ownership holdings index is stale or incomplete.", details={"errors": snapshot_errors, "recovery_hint": INDEX_RECOVERY_HINT})
     cutoff = arguments.knowledge_cutoff.isoformat() if arguments.knowledge_cutoff else None
     source_entity_id = arguments.source_entity_id
     if not repository.entity_map([source_entity_id]) and "." not in source_entity_id:

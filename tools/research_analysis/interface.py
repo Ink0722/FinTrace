@@ -19,6 +19,7 @@ CLAIM_TYPES = {
     "cited_fact", "analyst_judgment", "earnings_forecast",
     "investment_rating", "risk_opinion",
 }
+INDEX_RECOVERY_HINT = "Upload the prebuilt research_views.sqlite to the configured index path."
 
 
 class ResearchArguments(BaseModel):
@@ -63,10 +64,10 @@ def research_analysis(call: ToolCall) -> ToolResult:
         return failed(call, started, ErrorType.INVALID_ARGUMENT, f"Invalid research_analysis arguments or configuration: {exc}")
     repository = ResearchRepository(config.index_path)
     if not repository.available():
-        return failed(call, started, ErrorType.DATA_NOT_AVAILABLE, f"Research index not found: {config.index_path}", details={"build_command": "python -m data_pipeline.research_views.build_index"})
+        return failed(call, started, ErrorType.DATA_NOT_AVAILABLE, f"Research index not found: {config.index_path}", details={"recovery_hint": INDEX_RECOVERY_HINT})
     snapshot_errors = validate_snapshot(config.index_path, config.research_path, config.chunks_path)
     if snapshot_errors:
-        return failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "Research index is stale or incomplete.", details={"errors": snapshot_errors, "build_command": "python -m data_pipeline.research_views.build_index"})
+        return failed(call, started, ErrorType.DATA_NOT_AVAILABLE, "Research index is stale or incomplete.", details={"errors": snapshot_errors, "recovery_hint": INDEX_RECOVERY_HINT})
     try:
         claims = repository.query_claims(
             company_ids=arguments.company_ids, start_date=arguments.start_date,

@@ -1,3 +1,3 @@
-作用：FinTrace 的用户入口层。
-主要文件：cli.py 提供交互式命令行；cli_render.py 渲染执行轨迹；api/ 提供 Web API。
-部署：服务器运行 API 时必须保留本目录。
+作用：FinTrace 的后端入口层。
+主要文件：api/main.py 提供 Web API、SSE 和展示会话接口。
+部署：由 Uvicorn 在服务器内网地址加载。
