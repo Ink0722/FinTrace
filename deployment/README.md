@@ -4,15 +4,18 @@
 
 ```bash
 sudo useradd --system --create-home --shell /usr/sbin/nologin fintrace
-sudo mkdir -p /opt/fintrace/current /opt/fintrace/shared /var/lib/fintrace /etc/fintrace
-sudo chown -R fintrace:fintrace /opt/fintrace /var/lib/fintrace
+sudo mkdir -p /workspace/fintrace/runtime /workspace/fintrace/data/indexes /etc/fintrace
+sudo chown -R fintrace:fintrace /workspace/fintrace
 ```
 
-代码放在 `/opt/fintrace/current`，大型索引上传到 `/opt/fintrace/current/data/indexes`。将展示种子复制到：
+代码通过 Git 放在 `/workspace/fintrace`。以下两类大文件不进入 Git，需要分别上传：
 
 ```text
-/opt/fintrace/shared/fintrace-showcase-seed.sqlite3
+/workspace/fintrace/data/indexes/
+/workspace/fintrace/runtime/fintrace.sqlite3
 ```
+
+若不上传运行数据库，首次启动时会使用项目内的 `deployment/assets/fintrace-showcase-seed.sqlite3` 初始化；若运行数据库已经上传，则不会覆盖。
 
 可用以下文件核验种子：
 
@@ -24,9 +27,9 @@ deployment/assets/fintrace-showcase-seed.sha256
 ## 安装依赖
 
 ```bash
-python3 -m venv /opt/fintrace/venv
-/opt/fintrace/venv/bin/pip install -r /opt/fintrace/current/requirements.txt
-cd /opt/fintrace/current/fintrace-frontend
+python3 -m venv /workspace/fintrace/.venv
+/workspace/fintrace/.venv/bin/pip install -r /workspace/fintrace/requirements.txt
+cd /workspace/fintrace/fintrace-frontend
 npm ci
 npm run build
 ```
@@ -49,7 +52,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now fintrace-api fintrace-frontend
 ```
 
-API 的 `ExecStartPre` 会在首次启动时初始化 `/var/lib/fintrace/fintrace.sqlite3`。若运行库已经存在，则原样保留。
+API 的 `ExecStartPre` 会在首次启动时初始化 `/workspace/fintrace/runtime/fintrace.sqlite3`。若运行库已经存在，则原样保留。
 
 ## 配置公网入口
 

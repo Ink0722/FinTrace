@@ -28,7 +28,7 @@ FinTrace 是面向 A 股研究场景的证据驱动金融 Agent。系统先解�
   -> LangGraph Agent
        -> 五类只读工具 -> data/indexes/
        -> Qwen Chat / Qwen Embedding
-  -> /var/lib/fintrace/fintrace.sqlite3
+  -> /workspace/fintrace/runtime/fintrace.sqlite3
 ```
 
 FastAPI 不直接暴露公网。展示模式下除 `/health` 外，所有请求都必须携带前端服务端代理注入的内部密钥。
@@ -71,7 +71,7 @@ data/indexes/ownership_analysis/ownership_holdings.sqlite
 data/indexes/research_analysis/research_views.sqlite
 ```
 
-展示种子库已经包含在 `deployment/assets/`，无需从本地运行数据库复制。
+展示种子库已经包含在 `deployment/assets/`，可用于首次初始化。若要保留本地现有的最终评测结果与会话，则将运行数据库单独上传到 `runtime/fintrace.sqlite3`；该文件不进入 Git。
 
 ## 环境变量
 
@@ -89,7 +89,7 @@ FINTRACE_INTERNAL_API_KEY=
 示例文件已经预设服务器运行库和项目内索引路径：
 
 ```dotenv
-FINTRACE_RUNTIME_DB=/var/lib/fintrace/fintrace.sqlite3
+FINTRACE_RUNTIME_DB=/workspace/fintrace/runtime/fintrace.sqlite3
 FINTRACE_DEPLOYMENT_MODE=showcase
 FINTRACE_API_BASE_URL=http://127.0.0.1:8000
 FINTRACE_API_HOST=127.0.0.1
@@ -102,16 +102,16 @@ FINTRACE_KNOWLEDGE_CUTOFF=2026-05-28
 推荐目录：
 
 ```text
-/opt/fintrace/current/                     当前代码
-/opt/fintrace/venv/                        Python 环境
-/opt/fintrace/shared/fintrace-showcase-seed.sqlite3
-/var/lib/fintrace/fintrace.sqlite3          持久化运行库
+/workspace/fintrace/                         当前代码
+/workspace/fintrace/.venv/                   Python 环境
+/workspace/fintrace/data/indexes/            单独上传的冻结索引
+/workspace/fintrace/runtime/fintrace.sqlite3 单独上传的持久化运行库
 /etc/fintrace/fintrace.env                  服务环境变量
 ```
 
-1. 拉取本分支到 `/opt/fintrace/current/`。
-2. 将本地 `data/indexes/` 上传到 `/opt/fintrace/current/data/indexes/`。
-3. 将 `deployment/assets/fintrace-showcase-seed.sqlite3` 复制到 `/opt/fintrace/shared/`。
+1. 拉取本分支到 `/workspace/fintrace/`。
+2. 将本地 `data/indexes/` 上传到 `/workspace/fintrace/data/indexes/`。
+3. 将本地运行数据库上传到 `/workspace/fintrace/runtime/fintrace.sqlite3`；若不上传，则首次启动时自动使用项目内展示种子初始化。
 4. 创建 Python 环境并安装 `requirements.txt`。
 5. 在 `fintrace-frontend/` 执行 `npm ci` 和 `npm run build`。
 6. 创建 `/etc/fintrace/fintrace.env` 并填写密钥。
