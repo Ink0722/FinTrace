@@ -16,6 +16,7 @@ htmlcov/
 
 # Virtual environments
 .venv/
+.conda-env/
 venv/
 env/
 ENV/
@@ -49,6 +50,7 @@ data/*
 *.rar
 *.tar
 *.tar.gz
+*.bundle
 *.parquet
 *.feather
 *.pkl

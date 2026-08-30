@@ -1,6 +1,6 @@
 # FinTrace Showcase
 
-本分支是 FinTrace 的竞赛提交与线上展示版本，只保留图形界面运行所需的代码、提示词、展示数据和服务器配置。完整的数据预处理、测试、评测和技术文档保存在 `main` 分支的 `bde526b` 提交中。
+本分支是 FinTrace 的竞赛提交与线上展示版本，只保留图形界面运行所需的代码、提示词、冻结索引和服务器配置。完整的数据预处理、测试、评测和技术文档保存在 `main` 分支的 `bde526b` 提交中。
 
 FinTrace 是面向 A 股研究场景的证据驱动金融 Agent。系统先解析主体、时间和任务，再调用冻结数据上的确定性工具，最后由 Qwen 在工具证据范围内生成回答。证据不足或模型调用失败时会明确提示，不使用无证据模板补造结论。
 
@@ -12,7 +12,6 @@ FinTrace 是面向 A 股研究场景的证据驱动金融 Agent。系统先解�
 - 公司事件查询与事件簇聚合；
 - 带来源归属的研报观点查询；
 - 多轮会话、滚动摘要、SSE 流式回答和完整工具轨迹；
-- 35 个只读评测会话、1410 轮最终评测结果；
 - 可持续保存且不自动清理的新建演示会话。
 
 系统不提供实时行情、账户操作、投资交易或完整工商股权查询。
@@ -24,7 +23,7 @@ FinTrace 是面向 A 股研究场景的证据驱动金融 Agent。系统先解�
   -> Nginx HTTPS + Basic Auth
   -> Next.js 127.0.0.1:3000
   -> 服务端代理附加 X-FinTrace-Internal-Key
-  -> FastAPI 127.0.0.1:8000
+  -> FastAPI 127.0.0.1:8100
   -> LangGraph Agent
        -> 五类只读工具 -> data/indexes/
        -> Qwen Chat / Qwen Embedding
@@ -43,8 +42,8 @@ tools/                       五类在线工具
 prompts/                     版本化 LLM 提示词
 data_pipeline/               在线复用的查询向量与名称标准化函数
 fintrace-frontend/           Next.js 图形界面
-deployment/                  种子库、Nginx 和 systemd 配置
-data/indexes/                冻结索引，需在服务器上单独上传
+deployment/                  空库初始化、Nginx 和 systemd 配置
+data/indexes/                随提交压缩包交付的冻结索引
 .env.example                 服务器环境变量模板
 requirements.txt             Python 依赖
 ```
@@ -53,7 +52,7 @@ requirements.txt             Python 依赖
 
 ## 必需数据
 
-`data/indexes/` 不进入 Git，必须从本地完整上传到服务器项目目录。线上运行需要：
+正式提交压缩包已经包含 `data/indexes/`。线上运行需要：
 
 ```text
 data/indexes/document_search/
@@ -71,7 +70,7 @@ data/indexes/ownership_analysis/ownership_holdings.sqlite
 data/indexes/research_analysis/research_views.sqlite
 ```
 
-展示种子库已经包含在 `deployment/assets/`，可用于首次初始化。若要保留本地现有的最终评测结果与会话，则将运行数据库单独上传到 `runtime/fintrace.sqlite3`；该文件不进入 Git。
+提交包不包含历史会话。首次启动会创建空运行库；此后新建会话持续写入 `runtime/fintrace.sqlite3`，服务重启和代码更新均不会覆盖该文件。
 
 ## 环境变量
 
@@ -91,9 +90,9 @@ FINTRACE_INTERNAL_API_KEY=
 ```dotenv
 FINTRACE_RUNTIME_DB=/workspace/fintrace/runtime/fintrace.sqlite3
 FINTRACE_DEPLOYMENT_MODE=showcase
-FINTRACE_API_BASE_URL=http://127.0.0.1:8000
+FINTRACE_API_BASE_URL=http://127.0.0.1:8100
 FINTRACE_API_HOST=127.0.0.1
-FINTRACE_API_PORT=8000
+FINTRACE_API_PORT=8100
 FINTRACE_KNOWLEDGE_CUTOFF=2026-05-28
 ```
 
@@ -103,15 +102,15 @@ FINTRACE_KNOWLEDGE_CUTOFF=2026-05-28
 
 ```text
 /workspace/fintrace/                         当前代码
-/workspace/fintrace/.venv/                   Python 环境
-/workspace/fintrace/data/indexes/            单独上传的冻结索引
-/workspace/fintrace/runtime/fintrace.sqlite3 单独上传的持久化运行库
+/workspace/fintrace/.conda-env/              Conda Python 环境
+/workspace/fintrace/data/indexes/            随压缩包交付的冻结索引
+/workspace/fintrace/runtime/fintrace.sqlite3 首次启动创建的持久化运行库
 /etc/fintrace/fintrace.env                  服务环境变量
 ```
 
-1. 拉取本分支到 `/workspace/fintrace/`。
-2. 将本地 `data/indexes/` 上传到 `/workspace/fintrace/data/indexes/`。
-3. 将本地运行数据库上传到 `/workspace/fintrace/runtime/fintrace.sqlite3`；若不上传，则首次启动时自动使用项目内展示种子初始化。
+1. 将 `FinTrace-Submission.tar.gz` 解压到 `/workspace/fintrace/`。
+2. 确认压缩包内的 `data/indexes/` 完整。
+3. 创建可写的 `/workspace/fintrace/runtime/`；首次启动自动创建空运行库。
 4. 创建 Python 环境并安装 `requirements.txt`。
 5. 在 `fintrace-frontend/` 执行 `npm ci` 和 `npm run build`。
 6. 创建 `/etc/fintrace/fintrace.env` 并填写密钥。
@@ -120,7 +119,7 @@ FINTRACE_KNOWLEDGE_CUTOFF=2026-05-28
 9. 使用 `htpasswd` 创建 `/etc/nginx/fintrace.htpasswd`。
 10. 启动 `fintrace-api`、`fintrace-frontend` 和 Nginx。
 
-API 服务启动前会执行 `deployment.bootstrap_showcase`：仅当持久化运行库不存在时复制展示种子；服务器重启和代码更新不会覆盖已有演示会话。
+API 服务启动前会执行 `deployment.bootstrap_showcase`：仅当持久化运行库不存在时创建空库；服务器重启和代码更新不会覆盖已有演示会话。
 
 完整命令与验收步骤见 [deployment/README.md](deployment/README.md)。
 
@@ -158,19 +157,18 @@ npm run dev
 | `PATCH` | `/showcase/sessions/{session_id}` | 重命名可写演示会话 |
 | `DELETE` | `/showcase/sessions/{session_id}` | 删除可写演示会话 |
 
-最终评测会话为只读；新建演示会话可以写入、重命名和删除。
+新建演示会话可以写入、重命名和删除，并在服务重启后恢复。
 
 ## 发布验收
 
 ```text
 1. GET /health 返回 {"status":"ok"}
 2. 域名访问需要 Basic Auth
-3. 公网不能直接访问 8000 和 3000 端口
-4. 前端可加载 35 个最终评测会话
-5. 只读评测会话不能修改或追加消息
-6. 新建会话能够流式回答并在刷新后恢复
-7. 工具轨迹与文件、非文件证据均可展开查看
-8. 重启服务后评测结果和新建会话均不丢失
+3. 公网不能直接访问 8100 和 3000 端口
+4. 首次启动显示空会话列表
+5. 新建会话能够流式回答并在刷新后恢复
+6. 工具轨迹与文件、非文件证据均可展开查看
+7. 重启服务后新建会话不丢失
 ```
 
 ## 完整版本

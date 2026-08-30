@@ -183,6 +183,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "app.api.main:app",
         host=os.getenv("FINTRACE_API_HOST", "127.0.0.1"),
-        port=int(os.getenv("FINTRACE_API_PORT", "8000")),
+        port=int(os.getenv("FINTRACE_API_PORT", "8100")),
         reload=False,
     )

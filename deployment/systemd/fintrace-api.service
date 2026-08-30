@@ -9,8 +9,8 @@ User=fintrace
 Group=fintrace
 WorkingDirectory=/workspace/fintrace
 EnvironmentFile=/etc/fintrace/fintrace.env
-ExecStartPre=/workspace/fintrace/.venv/bin/python -m deployment.bootstrap_showcase --seed /workspace/fintrace/deployment/assets/fintrace-showcase-seed.sqlite3 --runtime /workspace/fintrace/runtime/fintrace.sqlite3
-ExecStart=/workspace/fintrace/.venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port 8000
+ExecStartPre=/workspace/fintrace/.conda-env/bin/python -m deployment.bootstrap_showcase --runtime /workspace/fintrace/runtime/fintrace.sqlite3
+ExecStart=/workspace/fintrace/.conda-env/bin/uvicorn app.api.main:app --host 127.0.0.1 --port 8100
 Restart=on-failure
 RestartSec=5
 

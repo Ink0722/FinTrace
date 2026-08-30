@@ -1,7 +1,7 @@
 import "server-only";
 
 export function backendUrl(path: string): string {
-  const base = process.env.FINTRACE_API_BASE_URL ?? "http://127.0.0.1:8000";
+  const base = process.env.FINTRACE_API_BASE_URL ?? "http://127.0.0.1:8100";
   return `${base.replace(/\/$/, "")}${path}`;
 }
 
